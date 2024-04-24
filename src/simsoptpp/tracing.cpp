@@ -472,6 +472,31 @@ particle_guiding_center_tracing(
 
 template<template<class, std::size_t, xt::layout_type> class T>
 tuple<vector<array<double, 5>>, vector<array<double, 6>>>
+particle_guiding_center_tracing_gpu(
+        shared_ptr<MagneticField<T>> field, array<double, 3> xyz_init,
+        double m, double q, double vtotal, double vtang, double tmax, double tol, bool vacuum, vector<double> phis, vector<shared_ptr<StoppingCriterion>> stopping_criteria)
+{
+    typename MagneticField<T>::Tensor2 xyz({{xyz_init[0], xyz_init[1], xyz_init[2]}});
+    field->set_points(xyz);
+    double AbsB = field->AbsB_ref()(0);
+    double vperp2 = vtotal*vtotal - vtang*vtang;
+    double mu = vperp2/(2*AbsB);
+
+    array<double, 4> y = {xyz_init[0], xyz_init[1], xyz_init[2], vtang};
+    double r0 = std::sqrt(xyz_init[0]*xyz_init[0] + xyz_init[1]*xyz_init[1]);
+    double dtmax = r0*0.5*M_PI/vtotal; // can at most do quarter of a revolution per step
+    double dt = 1e-3 * dtmax; // initial guess for first timestep, will be adjusted by adaptive timestepper
+
+    if(vacuum){
+        auto rhs_class = GuidingCenterVacuumRHS<T>(field, m, q, mu);
+        return solve(rhs_class, y, tmax, dt, dtmax, tol, phis, stopping_criteria);
+    }
+    else
+        throw std::logic_error("Guiding center right hand side currently only implemented for vacuum fields.");
+}
+
+template<template<class, std::size_t, xt::layout_type> class T>
+tuple<vector<array<double, 5>>, vector<array<double, 6>>>
 particle_guiding_center_boozer_tracing(
         shared_ptr<BoozerMagneticField<T>> field, array<double, 3> stz_init,
         double m, double q, double vtotal, double vtang, double tmax, double tol,
@@ -513,6 +538,11 @@ tuple<vector<array<double, 5>>, vector<array<double, 6>>> particle_guiding_cente
         double m, double q, double vtotal, double vtang, double tmax, double tol, bool vacuum,
         vector<double> phis, vector<shared_ptr<StoppingCriterion>> stopping_criteria);
 
+template
+tuple<vector<array<double, 5>>, vector<array<double, 6>>> particle_guiding_center_tracing_gpu<xt::pytensor>(
+        shared_ptr<MagneticField<xt::pytensor>> field, array<double, 3> xyz_init,
+        double m, double q, double vtotal, double vtang, double tmax, double tol, bool vacuum,
+        vector<double> phis, vector<shared_ptr<StoppingCriterion>> stopping_criteria);
 
 template<template<class, std::size_t, xt::layout_type> class T>
 tuple<vector<array<double, 7>>, vector<array<double, 8>>>

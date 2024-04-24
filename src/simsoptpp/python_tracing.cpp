@@ -63,6 +63,20 @@ void init_tracing(py::module_ &m){
         py::arg("stopping_criteria")=vector<shared_ptr<StoppingCriterion>>{}
         );
 
+        m.def("particle_guiding_center_tracing_gpu", &particle_guiding_center_tracing_gpu<xt::pytensor>,
+        py::arg("field"),
+        py::arg("xyz_init"),
+        py::arg("m"),
+        py::arg("q"),
+        py::arg("vtotal"),
+        py::arg("vtang"),
+        py::arg("tmax"),
+        py::arg("tol"),
+        py::arg("vacuum"),
+        py::arg("phis")=vector<double>{},
+        py::arg("stopping_criteria")=vector<shared_ptr<StoppingCriterion>>{}
+        );
+
     m.def("particle_fullorbit_tracing", &particle_fullorbit_tracing<xt::pytensor>,
         py::arg("field"),
         py::arg("xyz_init"),
