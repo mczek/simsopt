@@ -158,6 +158,8 @@ inline simd_t rsqrt(const simd_t& r2){
 #endif
 #endif
 
-inline double rsqrt(const double& r2){
-    return 1./std::sqrt(r2);
+#ifndef __CUDACC__
+ inline double rsqrt(const double& r2){
+     return 1./std::sqrt(r2);
 }
+#endif

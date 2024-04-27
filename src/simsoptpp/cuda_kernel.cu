@@ -1,4 +1,8 @@
+// #include "simdhelpers.h" // import above cuda_runtime to prevent collision for rsqrt
+#include <cuda_runtime.h>
 #include <iostream>
+#include "tracing.h"
+
 
 __global__ void addKernel(int *c, const int* a, const int* b, int size){
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
@@ -29,3 +33,5 @@ extern "C" void addKernelWrapper(int *c, const int *a, const int *b, int size){
     cudaFree(d_b);
     cudaFree(d_c);
 }
+
+
