@@ -35,6 +35,8 @@ void init_tracing(py::module_ &);
 void init_distance(py::module_ &);
 
 
+extern "C" void addKernelWrapper(int *c, const int *a, const int *b, int size);
+
 
 PYBIND11_MODULE(simsoptpp, m) {
     xt::import_numpy();
@@ -149,6 +151,18 @@ PYBIND11_MODULE(simsoptpp, m) {
             eigC = eigv.transpose()*eigB;
             return C;
         });
+    
+    m.def("add_kernel", [](py::array_t<int> a, py::array_t<int> b){
+        auto a_buf = a.request(), b_buf = b.request();
+        int size = a_buf.size;
+
+        int* c = new int[size];
+        addKernelWrapper(c, (const int *)a_buf.ptr, (const int *)b_buf.ptr, size);
+        py::array_t<int> result(size, c);
+        delete[] c;
+        return result;
+    });
+
 
 #ifdef VERSION_INFO
     m.attr("__version__") = VERSION_INFO;
