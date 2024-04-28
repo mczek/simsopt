@@ -8,7 +8,7 @@ typedef xt::pytensor<double, 2, xt::layout_type::row_major> PyTensor;
 using std::shared_ptr;
 using std::vector;
 
-#include <Eigen/Core>
+// #include <Eigen/Core>
 
 #include "magneticfield.h"
 #include "boozermagneticfield.h"
@@ -21,7 +21,7 @@ namespace py = pybind11;
 
 extern "C" void addKernelWrapper(int *c, const int *a, const int *b, int size);
 
-extern "C" void gpu_tracing(shared_ptr<MagneticField<xt::pytensor>> field, py::array_t<double> xyz_init,
+extern "C" tuple<vector<vector<array<double, 5>>>, vector<vector<array<double, 6>>>> gpu_tracing(shared_ptr<MagneticField<xt::pytensor>> field, py::array_t<double> xyz_init,
         double m, double q, double vtotal, py::array_t<double> vtang, double tmax, double tol, bool vacuum,
         vector<double> phis, vector<shared_ptr<StoppingCriterion>> stopping_criteria, int nparticles);
 // PYBIND11_MODULE(cuda_module, m) {

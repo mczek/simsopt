@@ -10,7 +10,7 @@ using std::shared_ptr;
 using std::vector;
 namespace py = pybind11;
 
-#include <Eigen/Core>
+// #include <Eigen/Core>
 
 #include "magneticfield.h"
 #include "boozermagneticfield.h"
@@ -47,10 +47,39 @@ extern "C" void addKernelWrapper(int *c, const int *a, const int *b, int size){
     cudaFree(d_c);
 }
 
-extern "C" void gpu_tracing(shared_ptr<MagneticField<xt::pytensor>> field, py::array_t<double> xyz_init,
+extern "C" tuple<vector<vector<array<double, 5>>>, vector<vector<array<double, 6>>>> gpu_tracing(shared_ptr<MagneticField<xt::pytensor>> field, py::array_t<double> xyz_init,
         double m, double q, double vtotal, py::array_t<double> vtang, double tmax, double tol, bool vacuum,
         vector<double> phis, vector<shared_ptr<StoppingCriterion>> stopping_criteria, int nparticles){
+
+    py::buffer_info vtang_buf = vtang.request();
+    double* vtang_arr = static_cast<double*>(vtang_buf.ptr); 
+
+    py::buffer_info xyz_buf = xyz_init.request();
+    double* xyz_init_arr = static_cast<double*>(xyz_buf.ptr); 
+
+    vector<vector<array<double, 5>>> res_all;
+    vector<vector<array<double, 6>>> res_phi_hits_all;
+    for(int i=0; i<nparticles; ++i){
+        std::cout << vtang_arr[i] << "\n";
+
+        // numpy arrays are in row major order
+        int start = 3*i;
+        array<double, 3> xyz_init_i = {xyz_init_arr[start], xyz_init_arr[start+1], xyz_init_arr[start+2]};
+        for(int j=0; j<3; ++j){
+            std::cout << xyz_init_i[j] << "\t";
+        }
+        std::cout << "\n";
+
+        tuple<vector<array<double, 5>>, vector<array<double, 6>>> out_i = particle_guiding_center_tracing(field, xyz_init_i, m, q, vtotal, vtang_arr[i], tmax, tol, vacuum, phis, stopping_criteria);
+        res_all.push_back(std::get<0>(out_i));
+        res_phi_hits_all.push_back(std::get<1>(out_i));
+    }
+    
+
+
     std::cout << "Hello world!\n";
+    return std::make_tuple(res_all, res_phi_hits_all);
 }
+
 
 
