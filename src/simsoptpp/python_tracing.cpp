@@ -9,7 +9,11 @@ typedef xt::pytensor<double, 2, xt::layout_type::row_major> PyTensor;
 using std::shared_ptr;
 using std::vector;
 #include "tracing.h"
+#include <Eigen/Core>
 
+extern "C" void gpu_tracing(shared_ptr<MagneticField<xt::pytensor>> field, py::array_t<double> xyz_init,
+        double m, double q, double vtotal, double vtang, double tmax, double tol, bool vacuum,
+        vector<double> phis, vector<shared_ptr<StoppingCriterion>> stopping_criteria, int nparticles);
 
 void init_tracing(py::module_ &m){
 
@@ -63,7 +67,7 @@ void init_tracing(py::module_ &m){
         py::arg("stopping_criteria")=vector<shared_ptr<StoppingCriterion>>{}
         );
 
-        m.def("particle_guiding_center_tracing_gpu", &particle_guiding_center_tracing_gpu<xt::pytensor>,
+        m.def("gpu_tracing", &gpu_tracing,
         py::arg("field"),
         py::arg("xyz_init"),
         py::arg("m"),
@@ -74,7 +78,8 @@ void init_tracing(py::module_ &m){
         py::arg("tol"),
         py::arg("vacuum"),
         py::arg("phis")=vector<double>{},
-        py::arg("stopping_criteria")=vector<shared_ptr<StoppingCriterion>>{}
+        py::arg("stopping_criteria")=vector<shared_ptr<StoppingCriterion>>{},
+        py::arg("nparticles")
         );
 
     m.def("particle_fullorbit_tracing", &particle_fullorbit_tracing<xt::pytensor>,
