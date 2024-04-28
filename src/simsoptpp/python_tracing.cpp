@@ -12,7 +12,7 @@ using std::vector;
 #include <Eigen/Core>
 
 extern "C" void gpu_tracing(shared_ptr<MagneticField<xt::pytensor>> field, py::array_t<double> xyz_init,
-        double m, double q, double vtotal, double vtang, double tmax, double tol, bool vacuum,
+        double m, double q, double vtotal, py::array_t<double> vtang, double tmax, double tol, bool vacuum,
         vector<double> phis, vector<shared_ptr<StoppingCriterion>> stopping_criteria, int nparticles);
 
 void init_tracing(py::module_ &m){

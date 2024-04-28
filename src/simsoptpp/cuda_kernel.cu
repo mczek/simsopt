@@ -48,7 +48,7 @@ extern "C" void addKernelWrapper(int *c, const int *a, const int *b, int size){
 }
 
 extern "C" void gpu_tracing(shared_ptr<MagneticField<xt::pytensor>> field, py::array_t<double> xyz_init,
-        double m, double q, double vtotal, double vtang, double tmax, double tol, bool vacuum,
+        double m, double q, double vtotal, py::array_t<double> vtang, double tmax, double tol, bool vacuum,
         vector<double> phis, vector<shared_ptr<StoppingCriterion>> stopping_criteria, int nparticles){
     std::cout << "Hello world!\n";
 }
