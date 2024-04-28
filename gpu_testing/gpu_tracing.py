@@ -27,7 +27,7 @@ logger = logging.getLogger('simsopt.field.tracing')
 logger.setLevel(1)
 
 # If we're in the CI, make the run a bit cheaper:
-nparticles = 3 if in_github_actions else 10
+nparticles = 3 if in_github_actions else 100
 degree = 2 if in_github_actions else 3
 
 # Directory for output
@@ -156,31 +156,23 @@ def trace_particles_gpu(field,
     print(type(xyz_inits))
     print(xyz_inits)
     print(speed_par)
-    x,y = sopp.gpu_tracing(
+    res_tys, res_phi_hits = sopp.gpu_tracing(
         field, xyz_inits,
         m, charge, speed_total, speed_par, tmax, tol,
         vacuum=(mode == 'gc_vac'), phis=phis, stopping_criteria=stopping_criteria, nparticles=nparticles)
 
+    print("printing output")
+    # print(len(x))
+    # print(len(y))
+    # print(sys.getsizeof(x)) 
+    # print(sys.getsizeof(y)) 
 
-    first, last = parallel_loop_bounds(comm, nparticles)
-    for i in range(first, last):
-        # only implementing gc_vac
-        res_ty, res_phi_hit = sopp.particle_guiding_center_tracing(
-            field, xyz_inits[i, :],
-            m, charge, speed_total, speed_par[i], tmax, tol,
-            vacuum=(mode == 'gc_vac'), phis=phis, stopping_criteria=stopping_criteria)
-
-
-        res_phi_hits.append(np.asarray(res_phi_hit))
+    for i in range(nparticles):
+        res_ty = res_tys[i]
         dtavg = res_ty[-1][0]/len(res_ty)
         logger.debug(f"{i+1:3d}/{nparticles}, t_final={res_ty[-1][0]}, average timestep {1000*dtavg:.10f}ms")
-        if res_ty[-1][0] < tmax - 1e-15:
-            loss_ctr += 1
-    if comm is not None:
-        loss_ctr = comm.allreduce(loss_ctr)
-    if comm is not None:
-        res_tys = [i for o in comm.allgather(res_tys) for i in o]
-        res_phi_hits = [i for o in comm.allgather(res_phi_hits) for i in o]
+
+    loss_ctr = sum([res_ty[-1][0] < tmax - 1e-15 for res_ty in res_tys])
     logger.debug(f'Particles lost {loss_ctr}/{nparticles}={(100*loss_ctr)//nparticles:d}%')
     return res_tys, res_phi_hits
 
@@ -251,10 +243,10 @@ def trace_particles(bfield, label, mode='gc_vac'):
         forget_exact_path=True)
     t2 = time.time()
     proc0_print(f"Time for particle tracing={t2-t1:.3f}s. Num steps={sum([len(l) for l in gc_tys])//nparticles}", flush=True)
-    if comm_world is None or comm_world.rank == 0:
-        # particles_to_vtk(gc_tys, OUT_DIR + f'particles_{label}_{mode}')
-        plot_poincare_data(gc_phi_hits, phis, OUT_DIR + f'poincare_particle_{label}_loss.png', mark_lost=True)
-        plot_poincare_data(gc_phi_hits, phis, OUT_DIR + f'poincare_particle_{label}.png', mark_lost=False)
+    # if comm_world is None or comm_world.rank == 0:
+    #     # particles_to_vtk(gc_tys, OUT_DIR + f'particles_{label}_{mode}')
+    #     plot_poincare_data(gc_phi_hits, phis, OUT_DIR + f'poincare_particle_{label}_loss.png', mark_lost=True)
+    #     plot_poincare_data(gc_phi_hits, phis, OUT_DIR + f'poincare_particle_{label}.png', mark_lost=False)
 
 
 proc0_print('Error in B', bsh.estimate_error_B(1000), flush=True)

@@ -57,8 +57,8 @@ extern "C" tuple<vector<vector<array<double, 5>>>, vector<vector<array<double, 6
     py::buffer_info xyz_buf = xyz_init.request();
     double* xyz_init_arr = static_cast<double*>(xyz_buf.ptr); 
 
-    vector<vector<array<double, 5>>> res_all;
-    vector<vector<array<double, 6>>> res_phi_hits_all;
+    vector<vector<array<double, 5>>> res_all(nparticles);
+    vector<vector<array<double, 6>>> res_phi_hits_all(nparticles);
     for(int i=0; i<nparticles; ++i){
         std::cout << vtang_arr[i] << "\n";
 
@@ -71,8 +71,8 @@ extern "C" tuple<vector<vector<array<double, 5>>>, vector<vector<array<double, 6
         std::cout << "\n";
 
         tuple<vector<array<double, 5>>, vector<array<double, 6>>> out_i = particle_guiding_center_tracing(field, xyz_init_i, m, q, vtotal, vtang_arr[i], tmax, tol, vacuum, phis, stopping_criteria);
-        res_all.push_back(std::get<0>(out_i));
-        res_phi_hits_all.push_back(std::get<1>(out_i));
+        res_all[i] = std::get<0>(out_i);
+        res_phi_hits_all[i] = std::get<1>(out_i);
     }
     
 
