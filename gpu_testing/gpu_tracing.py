@@ -27,7 +27,7 @@ logger = logging.getLogger('simsopt.field.tracing')
 logger.setLevel(1)
 
 # If we're in the CI, make the run a bit cheaper:
-nparticles = 3 if in_github_actions else 100
+nparticles = 3 if in_github_actions else 10
 degree = 2 if in_github_actions else 3
 
 # Directory for output
@@ -184,25 +184,15 @@ def trace_particles_gpu(field,
     quad_info = np.hstack((quad_pts, vals))
     print("quad info")
     print(quad_info)
-    res_tys, res_phi_hits = sopp.gpu_tracing(
+    did_leave = sopp.gpu_tracing(
         quad_info, rrange, zrange, phirange, xyz_inits,
         m, charge, speed_total, speed_par, tmax, tol,
         vacuum=(mode == 'gc_vac'), phis=phis, stopping_criteria=stopping_criteria, nparticles=nparticles)
 
     print("printing output")
-    # print(len(x))
-    # print(len(y))
-    # print(sys.getsizeof(x)) 
-    # print(sys.getsizeof(y)) 
-
-    for i in range(nparticles):
-        res_ty = res_tys[i]
-        dtavg = res_ty[-1][0]/len(res_ty)
-        logger.debug(f"{i+1:3d}/{nparticles}, t_final={res_ty[-1][0]}, average timestep {1000*dtavg:.10f}ms")
-
-    loss_ctr = sum([res_ty[-1][0] < tmax - 1e-15 for res_ty in res_tys])
+    loss_ctr = sum(did_leave)
     logger.debug(f'Particles lost {loss_ctr}/{nparticles}={(100*loss_ctr)//nparticles:d}%')
-    return res_tys, res_phi_hits
+    return did_leave
 
 def trace_particles_starting_on_curve_gpu(curve, field, nparticles, tmax=1e-4,
                                       mass=ALPHA_PARTICLE_MASS, charge=ALPHA_PARTICLE_CHARGE,
@@ -263,14 +253,15 @@ def trace_particles_starting_on_curve_gpu(curve, field, nparticles, tmax=1e-4,
 def trace_particles(bfield, label, mode='gc_vac'):
     t1 = time.time()
     phis = [(i/4)*(2*np.pi/nfp) for i in range(4)]
-    gc_tys, gc_phi_hits = trace_particles_starting_on_curve_gpu(
+    did_leave = trace_particles_starting_on_curve_gpu(
         ma, bfield, nparticles, tmax=1e-2, seed=1, mass=PROTON_MASS, charge=ELEMENTARY_CHARGE,
         Ekin=5000*ONE_EV, umin=-1, umax=+1, comm=comm_world,
         phis=phis, tol=1e-9,
         stopping_criteria=[LevelsetStoppingCriterion(sc_particle.dist)], mode=mode,
         forget_exact_path=True)
+    print(did_leave)
     t2 = time.time()
-    proc0_print(f"Time for particle tracing={t2-t1:.3f}s. Num steps={sum([len(l) for l in gc_tys])//nparticles}", flush=True)
+    # proc0_print(f"Time for particle tracing={t2-t1:.3f}s. Num steps={sum([len(l) for l in gc_tys])//nparticles}", flush=True)
     # if comm_world is None or comm_world.rank == 0:
     #     # particles_to_vtk(gc_tys, OUT_DIR + f'particles_{label}_{mode}')
     #     plot_poincare_data(gc_phi_hits, phis, OUT_DIR + f'poincare_particle_{label}_loss.png', mark_lost=True)
