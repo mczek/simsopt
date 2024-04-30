@@ -138,7 +138,7 @@ def trace_particles_gpu(field,
             was hit. If `idx<0`, then `stopping_criteria[int(-idx)-1]` was hit.
     """
 
-    nparticles = xyz_inits.shape[0]
+    nparticles =  xyz_inits.shape[0]
     assert xyz_inits.shape[0] == len(parallel_speeds)
     speed_par = parallel_speeds
     mode = mode.lower()
@@ -156,8 +156,36 @@ def trace_particles_gpu(field,
     print(type(xyz_inits))
     print(xyz_inits)
     print(speed_par)
+
+    rrange = (np.min(rs), np.max(rs), n)
+    phirange = (0, 2*np.pi, n*2)
+    # exploit stellarator symmetry and only consider positive z values:
+    zrange = (0, np.max(zs), n//2)
+
+    r_vals = np.linspace(rrange[0], rrange[1], rrange[2])
+    phi_vals = np.linspace(phirange[0], phirange[1], phirange[2])
+    z_vals = np.linspace(zrange[0], zrange[1], zrange[2])
+
+    rr, phiphi, zz = np.meshgrid(r_vals, z_vals, phi_vals)
+    quad_pts = np.ascontiguousarray(np.array((rr.ravel(), zz.ravel(), phiphi.ravel())).T)
+    nquadpts = quad_pts.shape[0]
+
+    # B interpolation pts
+    bsh.set_points_cyl(quad_pts)
+    quad_B = bsh.B() # note this is in cartesian coords
+
+    # Surface interpolation using same quad pts
+    vals = -np.ones((quad_pts.shape[0], 1))
+    sc_particle.dist.evaluate_batch(quad_pts, vals)
+    vals = vals.reshape((quad_pts[:,0].shape[0], 1))
+    print("vals")
+    print(vals)
+
+    quad_info = np.hstack((quad_pts, vals))
+    print("quad info")
+    print(quad_info)
     res_tys, res_phi_hits = sopp.gpu_tracing(
-        field, xyz_inits,
+        quad_info, rrange, zrange, phirange, xyz_inits,
         m, charge, speed_total, speed_par, tmax, tol,
         vacuum=(mode == 'gc_vac'), phis=phis, stopping_criteria=stopping_criteria, nparticles=nparticles)
 

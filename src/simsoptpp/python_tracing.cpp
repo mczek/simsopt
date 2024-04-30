@@ -11,9 +11,9 @@ using std::vector;
 #include "tracing.h"
 #include <Eigen/Core>
 
-extern "C" tuple<vector<vector<array<double, 5>>>, vector<vector<array<double, 6>>>> gpu_tracing(shared_ptr<MagneticField<xt::pytensor>> field, py::array_t<double> xyz_init,
-        double m, double q, double vtotal, py::array_t<double> vtang, double tmax, double tol, bool vacuum,
-        vector<double> phis, vector<shared_ptr<StoppingCriterion>> stopping_criteria, int nparticles);
+extern "C" tuple<vector<vector<array<double, 5>>>, vector<vector<array<double, 6>>>> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> rrange,
+        py::array_t<double> phirange, py::array_t<double> zrange, py::array_t<double> xyz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
+        double tmax, double tol, bool vacuum, vector<double> phis, vector<shared_ptr<StoppingCriterion>> stopping_criteria, int nparticles);
 
 void init_tracing(py::module_ &m){
 
@@ -68,7 +68,10 @@ void init_tracing(py::module_ &m){
         );
 
         m.def("gpu_tracing", &gpu_tracing,
-        py::arg("field"),
+        py::arg("quad_pts"),
+        py::arg("rrange"),
+        py::arg("phirange"),
+        py::arg("nrange"),
         py::arg("xyz_init"),
         py::arg("m"),
         py::arg("q"),

@@ -13,6 +13,11 @@ using std::vector;
 using std::shared_ptr;
 using std::make_shared;
 
+#ifdef __CUDACC__
+#define DEVICE __device__ __host__
+#else
+#define DEVICE 
+#endif
 
 
 
@@ -178,7 +183,7 @@ class MagneticField {
             return *this;
         }
 
-        MagneticField& set_points_cart(Tensor2& p) {
+        DEVICE MagneticField& set_points_cart(Tensor2& p) {
             this->invalidate_cache();
             this->points_cart.invalidate_cache();
             this->points_cyl.invalidate_cache();
@@ -189,7 +194,7 @@ class MagneticField {
             return *this;
         }
 
-        MagneticField& set_points(Tensor2& p) {
+        DEVICE MagneticField& set_points(Tensor2& p) {
             return set_points_cart(p);
         }
 
@@ -275,6 +280,10 @@ class MagneticField {
 
         Tensor2& GradAbsB_cyl_ref() {
             return data_GradAbsBcyl.get_or_create_and_fill({npoints, 3}, [this](Tensor2& GradAbsB_cyl) { return _GradAbsB_cyl_impl(GradAbsB_cyl);});
+        }
+
+        int get_npoints(){
+            return npoints;
         }
 
 };
