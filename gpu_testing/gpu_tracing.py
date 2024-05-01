@@ -184,6 +184,7 @@ def trace_particles_gpu(field,
     quad_info = np.hstack((quad_pts, vals))
     print("quad info")
     print(quad_info)
+
     did_leave = sopp.gpu_tracing(
         quad_info, rrange, zrange, phirange, xyz_inits,
         m, charge, speed_total, speed_par, tmax, tol,

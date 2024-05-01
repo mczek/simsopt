@@ -17,7 +17,7 @@ namespace py = pybind11;
 #include "boozermagneticfield.h"
 #include "regular_grid_interpolant_3d.h"
 
-#define dt 0.00001
+// #define dt 1e-7
 
 // Particle Data Structure
 typedef struct particle_t {
@@ -99,9 +99,10 @@ void dshape(double x, double h, double* dshape){
 }
 
 void trace_particle(particle_t& p, double* rrange_arr, double* zrange_arr, double* phirange_arr, double* quadpts_arr,
-                        double tmax, double m, double q){
+                        double dt, double tmax, double m, double q){
     double mu;
     int nsteps = (int) (tmax / dt);
+    std::cout << tmax << "\t" << dt << "\t" << nsteps << "\n";
     double r_shape[4];
     double phi_shape[4];
     double z_shape[4];
@@ -112,16 +113,19 @@ void trace_particle(particle_t& p, double* rrange_arr, double* zrange_arr, doubl
 
     double B[3];
     double grad_B[9];
+    double nabla_normB[3];
+    double cross_prod[3];
 
     double r_grid_size = (rrange_arr[1] - rrange_arr[0]) / (rrange_arr[2]-1);
     double phi_grid_size = 2*M_PI / phirange_arr[2];
     double z_grid_size = (zrange_arr[1] - zrange_arr[0]) / (zrange_arr[2]-1);
 
-    for(int time_step=0; time_step<nsteps; ++time_step){
-
+    double t = 0.0;
+    // for(int time_step=0; time_step<nsteps; ++time_step){
+    while(t < tmax){
         /*
-            * Time step ODE
-            */
+        * Time step ODE
+        */
         double x = p.x;
         double y = p.y;
         double z = p.z;
@@ -131,24 +135,25 @@ void trace_particle(particle_t& p, double* rrange_arr, double* zrange_arr, doubl
         double phi = atan2(y, x);
 
         // index into mesh to obtain nearby points
-        int i = (int) ((r - rrange_arr[0]) / r_grid_size);
-        int j = (int) ((z - zrange_arr[0]) / z_grid_size);
-        int k = (int) ((phi - phirange_arr[0]) / phi_grid_size);
+        int i = (int) ((r - rrange_arr[0]) / r_grid_size) + 1;
+        int j = (int) ((z - zrange_arr[0]) / z_grid_size) + 1;
+        int k = (int) ((phi + M_PI) / phi_grid_size) + 1;
 
 
         // normalized positions in local grid wrt e.g. r at index i
         int nr = rrange_arr[2];
         int nphi = phirange_arr[2];
         int nz = zrange_arr[2];
-        double r_rel = (r -  ((rrange_arr[1]*(i-1) + rrange_arr[0]*(nr-i)) / (nr-1))) / r_grid_size;
-        double z_rel = (z -  ((zrange_arr[1]*(k-1) + zrange_arr[0]*(nz-k)) / (nz-1))) / z_grid_size;
-        double phi_rel = (phi - M_PI*(((k-1) % nphi) / nphi  - (nphi - 1 - ((k-1) % nphi))/(nphi-1))) / phi_grid_size;
+        double r_rel = (r -  ((rrange_arr[1]*i + rrange_arr[0]*(nr-1-i)) / (nr-1))) / r_grid_size;
+        double z_rel = (z -  ((zrange_arr[1]*j + zrange_arr[0]*(nz-1-j)) / (nz-1))) / z_grid_size;
+        double phi_rel = (phi - M_PI*( 2*(k % nphi) - nphi) / nphi) / phi_grid_size;
 
         // std::cout << "grid point found \n";
 
         shape(r_rel, r_shape);
-        shape(phi_rel, phi_shape);
         shape(z_rel, z_shape);
+        shape(phi_rel, phi_shape);
+
 
         // std::cout <<"shape set \n";
         // accumulate interpolation of B
@@ -164,11 +169,11 @@ void trace_particle(particle_t& p, double* rrange_arr, double* zrange_arr, doubl
         for(int ii=-1; ii<=2; ++ii){             
             for(int jj=-1; jj<=2; ++jj){                 
                 for(int kk=-1; kk<=2; ++kk){
-                    int wrap_k = (k+kk-1) % nphi + 1;
+                    int wrap_k = ((k+kk-1) % nphi) + 1;
                     if ((i+ii >= 0 & i+ii < nr) & (j+jj >= 0 & j+jj < nz)){
                         int start = 4*((i+ii)*nz*nphi + (j+jj)*nphi + (wrap_k));
                         // std::cout << "start=" << start << "\t" << 4*nr*nz*nphi << "\n";
-                        B[0] += quadpts_arr[start] * r_shape[ii+1]*z_shape[jj+1]*phi_shape[kk+1];
+                        B[0] += quadpts_arr[start]   * r_shape[ii+1]*z_shape[jj+1]*phi_shape[kk+1];
                         B[1] += quadpts_arr[start+1] * r_shape[ii+1]*z_shape[jj+1]*phi_shape[kk+1];
                         B[2] += quadpts_arr[start+2] * r_shape[ii+1]*z_shape[jj+1]*phi_shape[kk+1];
                     
@@ -182,16 +187,17 @@ void trace_particle(particle_t& p, double* rrange_arr, double* zrange_arr, doubl
         }
         // std::cout << "B interpolated \n";
 
+        std::cout << "r=" << r << "\t" << x << "\t" << y << "\t" << p.v_par << "\t" << surface_dist << "\n";
 
         p.has_left = (p.has_left || surface_dist < 0);
         if(p.has_left){
             return;
         }
 
-        //  accumulate grad B: rows are partial deriv wrt r, z, phi
+        //  Interpolate grad B: columns are partial deriv wrt r, z, phi, rows are entries of B
         //  row major order
-        for(int m=0; m<9; ++m){
-            grad_B[m] = 0.0;
+        for(int ii=0; ii<9; ++ii){
+            grad_B[ii] = 0.0;
         }
         dshape(r_rel, r_grid_size, r_dshape);
         dshape(phi_rel, phi_grid_size, phi_dshape);
@@ -200,15 +206,15 @@ void trace_particle(particle_t& p, double* rrange_arr, double* zrange_arr, doubl
         for(int ii=-1; ii<=2; ++ii){             
             for(int jj=-1; jj<=2; ++jj){                 
                 for(int kk=-1; kk<=2; ++kk){
-                    int wrap_k = (k+kk-1) % nphi + 1;
-                    int start = 4*((i+ii)*nz*nphi + (j+jj)*nphi + (wrap_k));
-                    if(start > 0 && start < 4*nr*nz*nphi){ // if valid index
+                    int wrap_k = ((k+kk-1) % nphi) + 1;
+                    if ((i+ii >= 0 & i+ii < nr) & (j+jj >= 0 & j+jj < nz)){
+                        int start = 4*((i+ii)*nz*nphi + (j+jj)*nphi + (wrap_k));
                         // interpolate gradient for each entry of B, filling in each column of the gradient
                         for(int l=0; l<3; ++l){
                             double Bval = quadpts_arr[start+l];
-                            grad_B[l] += Bval * r_dshape[ii+1]*z_shape[jj+1]*phi_shape[kk+1];
-                            grad_B[3+l] += Bval * r_shape[ii+1]*z_dshape[jj+1]*phi_shape[kk+1];
-                            grad_B[6+l] += Bval * r_shape[ii+1]*z_shape[jj+1]*phi_dshape[kk+1];
+                            grad_B[3*l]   += Bval * r_dshape[ii+1]*z_shape[jj+1]*phi_shape[kk+1];
+                            grad_B[3*l+1] += Bval * r_shape[ii+1]*z_dshape[jj+1]*phi_shape[kk+1];
+                            grad_B[3*l+2] += Bval * r_shape[ii+1]*z_shape[jj+1]*phi_dshape[kk+1];
                         }
                     }
 
@@ -219,18 +225,18 @@ void trace_particle(particle_t& p, double* rrange_arr, double* zrange_arr, doubl
         // std::cout << "grad B interpolated \n";
 
 
-        // convert gradient from cylindrical to cartesian coordinates x,y,z
+        // convert gradient from cylindrical (r, z, phi) to cartesian coordinates (x, y, z)
         double c = cos(phi);
         double s = sin(phi);
 
 
-        for(int l=0; l<3; ++l){ // iter over column
-            double dfdr = grad_B[l];
-            double dfdphi_divr = grad_B[l+3] / r;
+        for(int l=0; l<3; ++l){ // iter over row
+            double dfdr = grad_B[3*l];
+            double dfdphi_divr = grad_B[3*l+2] / r;
             
-            grad_B[l] = c*dfdr - s*dfdphi_divr;
-            grad_B[l+6] = grad_B[l+3]; // z index changes
-            grad_B[l+3] = s*dfdr + c*dfdphi_divr;
+            grad_B[3*l]   = c*dfdr - s*dfdphi_divr;
+            grad_B[3*l+2] = grad_B[3*l+1]; // z index changes
+            grad_B[3*l+1] = s*dfdr + c*dfdphi_divr;
         }
 
 
@@ -239,39 +245,42 @@ void trace_particle(particle_t& p, double* rrange_arr, double* zrange_arr, doubl
         // std::cout << "starting updates \n";
 
         double normB = sqrt(B[0]*B[0] + B[1]*B[1] + B[2]*B[2]);
-        double nabla_normB[3];
 
-        // use transpose of grad_B to compute \nabla B \dot B
-        nabla_normB[0] = (grad_B[0]*B[0] + grad_B[3]*B[1] + grad_B[6]*B[2]) / (2*normB);
-        nabla_normB[1] = (grad_B[1]*B[0] + grad_B[4]*B[1] + grad_B[7]*B[2]) / (2*normB);
-        nabla_normB[2] = (grad_B[2]*B[0] + grad_B[5]*B[1] + grad_B[8]*B[2]) / (2*normB);
 
-        double cross_prod[3];
+        // compute \nabla |B|
+        //  \nabla |B| = (\nabla B  B)(2 |B|)
+        nabla_normB[0] = (grad_B[0]*B[0] + grad_B[1]*B[1] + grad_B[2]*B[2]) / (2*normB);
+        nabla_normB[1] = (grad_B[3]*B[0] + grad_B[4]*B[1] + grad_B[5]*B[2]) / (2*normB);
+        nabla_normB[2] = (grad_B[6]*B[0] + grad_B[7]*B[1] + grad_B[8]*B[2]) / (2*normB);
+
+        // compute B \times \nabla |B|
         cross_prod[0] = B[1]*nabla_normB[2] - B[2]*nabla_normB[1];
         cross_prod[1] = B[2]*nabla_normB[0] - B[0]*nabla_normB[2];
         cross_prod[2] = B[0]*nabla_normB[1] - B[1]*nabla_normB[0];
 
 
-        p.dotx = p.v_par * B[0]/normB + m/(q*pow(normB, 3)) * (0.5*pow(p.v_perp, 2) + pow(p.v_par, 2))*cross_prod[0];
-        p.doty = p.v_par * B[1]/normB + m/(q*pow(normB, 3)) * (0.5*pow(p.v_perp, 2) + pow(p.v_par, 2))*cross_prod[1];
-        p.dotz = p.v_par * B[2]/normB + m/(q*pow(normB, 3)) * (0.5*pow(p.v_perp, 2) + pow(p.v_par, 2))*cross_prod[2];
+        p.dotx = p.v_par * B[0]/normB + (0.5*pow(p.v_perp, 2) + pow(p.v_par, 2))*cross_prod[0] * m/(q*pow(normB, 3));
+        p.doty = p.v_par * B[1]/normB + (0.5*pow(p.v_perp, 2) + pow(p.v_par, 2))*cross_prod[1] * m/(q*pow(normB, 3));
+        p.dotz = p.v_par * B[2]/normB + (0.5*pow(p.v_perp, 2) + pow(p.v_par, 2))*cross_prod[2] * m/(q*pow(normB, 3));
         
         // record initial mu
-        if(time_step == 0){
+        if(t == 0.0){
             mu = p.v_perp / (2*normB);
         }
 
         double BdotNablaNormB = B[0]*nabla_normB[0] + B[1]*nabla_normB[1] + B[2]*nabla_normB[2];
-        p.dotv_par = -mu*BdotNablaNormB/normB;
-        p.v_perp = 2*mu*normB;
+        p.dotv_par = -mu*BdotNablaNormB;
+        p.v_perp = sqrt(2*mu*normB);
 
 
         // update
+        std::cout << p.dotx << "\t" << p.doty << "\t" << p.dotz << "\t" << p.dotv_par << "\n";
         p.x += p.dotx * dt;
         p.y += p.doty * dt;
         p.z += p.dotz * dt;
         p.v_par += p.dotv_par * dt;
 
+        t += dt;
         // std::cout << "updates complete \n";
 
     }
@@ -313,15 +322,15 @@ extern "C" vector<bool> gpu_tracing(py::array_t<double> quad_pts, py::array_t<do
         particles[i].y = xyz_init_arr[start+1];
         particles[i].z = xyz_init_arr[start+2];
         particles[i].v_par = xyz_init_arr[start+3];
-        particles[i].v_perp = vtotal*vtotal -  particles[i].v_par* particles[i].v_par;
+        particles[i].v_perp = sqrt(vtotal*vtotal -  particles[i].v_par* particles[i].v_par);
         particles[i].has_left = false;
     }
 
     // std::cout << "particles initialized \n";
 
-
+    double dt = 1e-6*0.5*M_PI/vtotal;
     for(int p=0; p<nparticles; ++p){
-        trace_particle(particles[p], rrange_arr, zrange_arr, phirange_arr, quadpts_arr, tmax, m, q);
+        trace_particle(particles[p], rrange_arr, zrange_arr, phirange_arr, quadpts_arr, dt, tmax, m, q);
     }
 
     vector<bool> particle_loss(nparticles);
