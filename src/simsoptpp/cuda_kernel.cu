@@ -102,7 +102,7 @@ void trace_particle(particle_t& p, double* rrange_arr, double* zrange_arr, doubl
                         double dt, double tmax, double m, double q){
     double mu;
     int nsteps = (int) (tmax / dt);
-    std::cout << tmax << "\t" << dt << "\t" << nsteps << "\n";
+    // std::cout << tmax << "\t" << dt << "\t" << nsteps << "\n";
     double r_shape[4];
     double phi_shape[4];
     double z_shape[4];
@@ -137,17 +137,24 @@ void trace_particle(particle_t& p, double* rrange_arr, double* zrange_arr, doubl
         // index into mesh to obtain nearby points
         int i = (int) ((r - rrange_arr[0]) / r_grid_size) + 1;
         int j = (int) ((z - zrange_arr[0]) / z_grid_size) + 1;
-        int k = (int) ((phi + M_PI) / phi_grid_size) + 1;
+        int k = (int) (phi / phi_grid_size) + 1;
 
+        std::cout << "indices: " << i << "\t" << r << "\t" << rrange_arr[0] << "\t" << r_grid_size << "\n";
 
         // normalized positions in local grid wrt e.g. r at index i
         int nr = rrange_arr[2];
         int nphi = phirange_arr[2];
         int nz = zrange_arr[2];
-        double r_rel = (r -  ((rrange_arr[1]*i + rrange_arr[0]*(nr-1-i)) / (nr-1))) / r_grid_size;
-        double z_rel = (z -  ((zrange_arr[1]*j + zrange_arr[0]*(nz-1-j)) / (nz-1))) / z_grid_size;
-        double phi_rel = (phi - M_PI*( 2*(k % nphi) - nphi) / nphi) / phi_grid_size;
+        double r_rel = (r -  (rrange_arr[0] + i*r_grid_size)) / r_grid_size;
+        double z_rel = (z -  (zrange_arr[0] + j*z_grid_size)) / z_grid_size;
+        double phi_rel = (phi - (k*phi_grid_size)) / phi_grid_size;
 
+
+        std::cout << r << "\t" << -1*(r_rel*r_grid_size - r) << "\t" << r_grid_size << "\n";
+        std::cout << z << "\t" << -1*(z_rel*z_grid_size - z) << "\t" << z_grid_size << "\n";
+        std::cout << phi << "\t" << -1*(phi_rel*phi_grid_size - phi) << "\t" << phi_grid_size << "\n";
+        std::cout << "using index " <<  (i*nz*nphi + j*nphi + k) << "\n";
+        std::cout << quadpts_arr[4*(i*nz*nphi + j*nphi + k) + 3] << "\n";
         // std::cout << "grid point found \n";
 
         shape(r_rel, r_shape);
@@ -166,20 +173,23 @@ void trace_particle(particle_t& p, double* rrange_arr, double* zrange_arr, doubl
 
         // std::cout << "starting B accumulation\n";
         // quad pts are indexed r z phi
+        bool is_lost = false;
         for(int ii=-1; ii<=2; ++ii){             
             for(int jj=-1; jj<=2; ++jj){                 
                 for(int kk=-1; kk<=2; ++kk){
                     int wrap_k = ((k+kk-1) % nphi) + 1;
+
                     if ((i+ii >= 0 & i+ii < nr) & (j+jj >= 0 & j+jj < nz)){
                         int start = 4*((i+ii)*nz*nphi + (j+jj)*nphi + (wrap_k));
                         // std::cout << "start=" << start << "\t" << 4*nr*nz*nphi << "\n";
                         B[0] += quadpts_arr[start]   * r_shape[ii+1]*z_shape[jj+1]*phi_shape[kk+1];
                         B[1] += quadpts_arr[start+1] * r_shape[ii+1]*z_shape[jj+1]*phi_shape[kk+1];
                         B[2] += quadpts_arr[start+2] * r_shape[ii+1]*z_shape[jj+1]*phi_shape[kk+1];
-                    
-                        surface_dist += quadpts_arr[start+3] * r_shape[ii+1]*z_shape[jj+1]*phi_shape[kk+1];
+
+                        is_lost = is_lost || (quadpts_arr[start+3] < 0); 
+                        // surface_dist += quadpts_arr[start+3] * r_shape[ii+1]*z_shape[jj+1]*phi_shape[kk+1];
                     } else{
-                        std::cout << "bad grid index for" << r << "\t" << phi << "\t" << z <<"\n"; 
+                        // std::cout << "bad grid index for" << r << "\t" << phi << "\t" << z <<"\n"; 
                     }
 
                 }
@@ -187,12 +197,14 @@ void trace_particle(particle_t& p, double* rrange_arr, double* zrange_arr, doubl
         }
         // std::cout << "B interpolated \n";
 
-        std::cout << "r=" << r << "\t" << x << "\t" << y << "\t" << p.v_par << "\t" << surface_dist << "\n";
-
-        p.has_left = (p.has_left || surface_dist < 0);
+        // std::cout << "r=" << r << "\t" << x << "\t" << y << "\t" << p.v_par << "\t" << surface_dist << "\n";
+        // std::cout << t << "\t" << surface_dist << "\n";
+        p.has_left = (p.has_left || is_lost);
         if(p.has_left){
+            std::cout << "particle lost \n";
             return;
         }
+        // std::cout << "particle not lost \n";
 
         //  Interpolate grad B: columns are partial deriv wrt r, z, phi, rows are entries of B
         //  row major order
@@ -274,7 +286,7 @@ void trace_particle(particle_t& p, double* rrange_arr, double* zrange_arr, doubl
 
 
         // update
-        std::cout << p.dotx << "\t" << p.doty << "\t" << p.dotz << "\t" << p.dotv_par << "\n";
+        // std::cout << p.dotx << "\t" << p.doty << "\t" << p.dotz << "\t" << p.dotv_par << "\n";
         p.x += p.dotx * dt;
         p.y += p.doty * dt;
         p.z += p.dotz * dt;
@@ -289,7 +301,7 @@ void trace_particle(particle_t& p, double* rrange_arr, double* zrange_arr, doubl
 
 
 
-extern "C" vector<bool> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> rrange,
+extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> rrange,
         py::array_t<double> phirange, py::array_t<double> zrange, py::array_t<double> xyz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
         double tmax, double tol, bool vacuum, vector<double> phis, vector<shared_ptr<StoppingCriterion>> stopping_criteria, int nparticles){
 
@@ -300,6 +312,9 @@ extern "C" vector<bool> gpu_tracing(py::array_t<double> quad_pts, py::array_t<do
     //  read data in from python
     py::buffer_info xyz_buf = xyz_init.request();
     double* xyz_init_arr = static_cast<double*>(xyz_buf.ptr);
+    
+    py::buffer_info vtang_buf = vtang.request();
+    double* vtang_arr = static_cast<double*>(vtang_buf.ptr);
 
     // contsins b field and then curve distance
     py::buffer_info quadpts_buf = quad_pts.request();
@@ -321,21 +336,24 @@ extern "C" vector<bool> gpu_tracing(py::array_t<double> quad_pts, py::array_t<do
         particles[i].x = xyz_init_arr[start];
         particles[i].y = xyz_init_arr[start+1];
         particles[i].z = xyz_init_arr[start+2];
-        particles[i].v_par = xyz_init_arr[start+3];
+        particles[i].v_par = vtang_arr[i];
         particles[i].v_perp = sqrt(vtotal*vtotal -  particles[i].v_par* particles[i].v_par);
         particles[i].has_left = false;
+        
     }
 
     // std::cout << "particles initialized \n";
 
-    double dt = 1e-6*0.5*M_PI/vtotal;
+    double dt = 1e-1*0.5*M_PI/vtotal;
     for(int p=0; p<nparticles; ++p){
         trace_particle(particles[p], rrange_arr, zrange_arr, phirange_arr, quadpts_arr, dt, tmax, m, q);
     }
 
-    vector<bool> particle_loss(nparticles);
+    vector<double> particle_loss(3*nparticles);
     for(int i=0; i<nparticles; ++i){
-        particle_loss[i] = particles[i].has_left;
+        particle_loss[3*i] = particles[i].x;
+        particle_loss[3*i+1] = particles[i].y;
+        particle_loss[3*i+2] = particles[i].z;
     }
 
 

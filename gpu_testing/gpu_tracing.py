@@ -27,7 +27,7 @@ logger = logging.getLogger('simsopt.field.tracing')
 logger.setLevel(1)
 
 # If we're in the CI, make the run a bit cheaper:
-nparticles = 3 if in_github_actions else 10
+nparticles = 3 if in_github_actions else 1
 degree = 2 if in_github_actions else 3
 
 # Directory for output
@@ -45,7 +45,7 @@ curves_to_vtk(curves + [ma], OUT_DIR + 'coils')
 
 mpol = 5
 ntor = 5
-stellsym = True
+stellsym = False
 s = SurfaceRZFourier.from_nphi_ntheta(mpol=mpol, ntor=ntor, stellsym=stellsym, nfp=nfp,
                                       range="full torus", nphi=64, ntheta=24)
 
@@ -56,10 +56,13 @@ n = 16
 rs = np.linalg.norm(s.gamma()[:, :, 0:2], axis=2)
 zs = s.gamma()[:, :, 2]
 
-rrange = (np.min(rs), np.max(rs), n)
-phirange = (0, 2*np.pi/nfp, n*2)
+print("rs", rs)
+print("zs", zs)
+
+rrange = (np.min(rs), np.max(rs), 2*n)
+phirange = (0, 2*np.pi, n*2)
 # exploit stellarator symmetry and only consider positive z values:
-zrange = (0, np.max(zs), n//2)
+zrange = (np.min(zs), np.max(zs), 2*n)
 bsh = InterpolatedField(
     bs, degree, rrange, phirange, zrange, True, nfp=nfp, stellsym=True
 )
@@ -146,8 +149,8 @@ def trace_particles_gpu(field,
     m = mass
     speed_total = sqrt(2*Ekin/m)  # Ekin = 0.5 * m * v^2 <=> v = sqrt(2*Ekin/m)
 
-    if mode == 'full':
-        xyz_inits, v_inits, _ = gc_to_fullorbit_initial_guesses(field, xyz_inits, speed_par, speed_total, m, charge, eta=phase_angle)
+    # if mode == 'full':
+    #     xyz_inits, v_inits, _ = gc_to_fullorbit_initial_guesses(field, xyz_inits, speed_par, speed_total, m, charge, eta=phase_angle)
     res_tys = []
     res_phi_hits = []
     loss_ctr = 0
@@ -160,36 +163,69 @@ def trace_particles_gpu(field,
     rrange = (np.min(rs), np.max(rs), n)
     phirange = (0, 2*np.pi, n*2)
     # exploit stellarator symmetry and only consider positive z values:
-    zrange = (0, np.max(zs), n//2)
+    zrange = (np.min(zs), np.max(zs), n//2)
 
     r_vals = np.linspace(rrange[0], rrange[1], rrange[2])
     phi_vals = np.linspace(phirange[0], phirange[1], phirange[2])
     z_vals = np.linspace(zrange[0], zrange[1], zrange[2])
 
-    rr, phiphi, zz = np.meshgrid(r_vals, z_vals, phi_vals)
-    quad_pts = np.ascontiguousarray(np.array((rr.ravel(), zz.ravel(), phiphi.ravel())).T)
+    quad_pts = np.empty((rrange[2]*phirange[2]*zrange[2], 3))
+    for i in range(rrange[2]):
+        for j in range(zrange[2]):
+            for k in range(phirange[2]):
+                quad_pts[zrange[2]*phirange[2]*i + phirange[2]*j + k, :] = [r_vals[i], z_vals[j], phi_vals[k]]
+
+    print(rrange[2]*zrange[2]*phirange[2])
+    print(quad_pts.shape)
+    print(quad_pts)
+    print(rrange)
+    print("r", r_vals)
+    print("z", z_vals)
+    print("phi", phi_vals)
+
+
+    # exit()
+    # rr, zz, phiphi= np.meshgrid(r_vals, z_vals, phi_vals)
+    quad_pts = np.ascontiguousarray(quad_pts)
     nquadpts = quad_pts.shape[0]
 
     # B interpolation pts
     bsh.set_points_cyl(quad_pts)
     quad_B = bsh.B() # note this is in cartesian coords
 
+    # print(quad_B)
     # Surface interpolation using same quad pts
-    vals = -np.ones((quad_pts.shape[0], 1))
-    sc_particle.dist.evaluate_batch(quad_pts, vals)
+    rphiz_quadpts = np.ascontiguousarray(np.array((quad_pts[:, 0], quad_pts[:, 2], quad_pts[:, 1])).T)
+    print(rphiz_quadpts)
+    vals = sc_particle.evaluate_rphiz(rphiz_quadpts)
+    print("output vals")
+    print(vals)
     vals = vals.reshape((quad_pts[:,0].shape[0], 1))
     print("vals")
     print(vals)
+    print("max vals", max(vals))
+    print(vals[2573])
 
-    quad_info = np.hstack((quad_pts, vals))
+    # exit()
+
+    init_dists = sc_particle.evaluate_xyz(xyz_inits)
+    print(init_dists)
+    # exit()
+
+    quad_info = np.hstack((quad_B, vals))
+    print(quad_B.shape)
+    print(vals.shape)
     print("quad info")
     print(quad_info)
+    print(quad_info[2573, :])
 
-    did_leave = sopp.gpu_tracing(
-        quad_info, rrange, zrange, phirange, xyz_inits,
+    final_pos = sopp.gpu_tracing(
+        quad_info, rrange,  phirange, zrange, xyz_inits,
         m, charge, speed_total, speed_par, tmax, tol,
         vacuum=(mode == 'gc_vac'), phis=phis, stopping_criteria=stopping_criteria, nparticles=nparticles)
 
+    final_dist = sc_particle.evaluate_xyz(np.reshape(final_pos, (nparticles,3)))
+    did_leave = [x < 0 for x in final_dist]
     print("printing output")
     loss_ctr = sum(did_leave)
     logger.debug(f'Particles lost {loss_ctr}/{nparticles}={(100*loss_ctr)//nparticles:d}%')
@@ -262,7 +298,7 @@ def trace_particles(bfield, label, mode='gc_vac'):
         forget_exact_path=True)
     print(did_leave)
     t2 = time.time()
-    # proc0_print(f"Time for particle tracing={t2-t1:.3f}s. Num steps={sum([len(l) for l in gc_tys])//nparticles}", flush=True)
+    proc0_print(f"Time for particle tracing={t2-t1:.3f}s.", flush=True)
     # if comm_world is None or comm_world.rank == 0:
     #     # particles_to_vtk(gc_tys, OUT_DIR + f'particles_{label}_{mode}')
     #     plot_poincare_data(gc_phi_hits, phis, OUT_DIR + f'poincare_particle_{label}_loss.png', mark_lost=True)
