@@ -27,7 +27,7 @@ logger = logging.getLogger('simsopt.field.tracing')
 logger.setLevel(1)
 
 # If we're in the CI, make the run a bit cheaper:
-nparticles = 3 if in_github_actions else 1
+nparticles = 3 if in_github_actions else 10
 degree = 2 if in_github_actions else 3
 
 # Directory for output
@@ -189,13 +189,16 @@ def trace_particles_gpu(field,
     quad_pts = np.ascontiguousarray(quad_pts)
     nquadpts = quad_pts.shape[0]
 
-    # B interpolation pts
-    bsh.set_points_cyl(quad_pts)
-    quad_B = bsh.B() # note this is in cartesian coords
+
 
     # print(quad_B)
     # Surface interpolation using same quad pts
     rphiz_quadpts = np.ascontiguousarray(np.array((quad_pts[:, 0], quad_pts[:, 2], quad_pts[:, 1])).T)
+
+    # B interpolation pts
+    bsh.set_points_cyl(rphiz_quadpts)
+    quad_B = bsh.B() # note this is in cartesian coords
+
     print(rphiz_quadpts)
     vals = sc_particle.evaluate_rphiz(rphiz_quadpts)
     print("output vals")
@@ -212,6 +215,9 @@ def trace_particles_gpu(field,
     print(init_dists)
     # exit()
 
+    print(np.isnan(quad_B).sum())
+    # exit()
+
     quad_info = np.hstack((quad_B, vals))
     print(quad_B.shape)
     print(vals.shape)
@@ -219,13 +225,12 @@ def trace_particles_gpu(field,
     print(quad_info)
     print(quad_info[2573, :])
 
-    final_pos = sopp.gpu_tracing(
+    did_leave = sopp.gpu_tracing(
         quad_info, rrange,  phirange, zrange, xyz_inits,
         m, charge, speed_total, speed_par, tmax, tol,
         vacuum=(mode == 'gc_vac'), phis=phis, stopping_criteria=stopping_criteria, nparticles=nparticles)
 
-    final_dist = sc_particle.evaluate_xyz(np.reshape(final_pos, (nparticles,3)))
-    did_leave = [x < 0 for x in final_dist]
+    # did_leave = sc_particle.evaluate_xyz(np.reshape(final_pos, (np)
     print("printing output")
     loss_ctr = sum(did_leave)
     logger.debug(f'Particles lost {loss_ctr}/{nparticles}={(100*loss_ctr)//nparticles:d}%')
