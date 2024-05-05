@@ -248,6 +248,7 @@ void calc_derivs(double* state, double* out, double* rrange_arr, double* zrange_
     std::cout << r << "\t" << -1*(r_rel*r_grid_size - r) << "\t" << r_grid_size << "\n";
     std::cout << z << "\t" << -1*(z_rel*z_grid_size - z) << "\t" << z_grid_size << "\n";
     std::cout << phi << "\t" << -1*(phi_rel*phi_grid_size - phi) << "\t" << phi_grid_size << "\n";
+    std::cout << i << "\t" << j << "\t" << k << "\n";
     std::cout << "using index " <<  (i*nz*nphi + j*nphi + k) << "\n";
     std::cout << quadpts_arr[4*(i*nz*nphi + j*nphi + k) + 3] << "\n";
     // std::cout << "grid point found \n";
@@ -283,7 +284,7 @@ void calc_derivs(double* state, double* out, double* rrange_arr, double* zrange_
                     B[1] += quadpts_arr[start+1] * r_shape[ii]*z_shape[jj]*phi_shape[kk];
                     B[2] += quadpts_arr[start+2] * r_shape[ii]*z_shape[jj]*phi_shape[kk];
 
-                    // is_lost = is_lost || (quadpts_arr[start+3] < 0); 
+                    is_lost = is_lost || (quadpts_arr[start+3] < 0); 
                     // std::cout << ii << "\t" << jj << "\t" << kk << "\n";
                     // std::cout << "interp surface dist val: " << quadpts_arr[start+3] << "\n";
                     surface_dist += quadpts_arr[start+3] * r_shape[ii]*z_shape[jj]*phi_shape[kk];
@@ -294,6 +295,8 @@ void calc_derivs(double* state, double* out, double* rrange_arr, double* zrange_
             }
         }
     }
+
+    std::cout << "is quad pt lost: " << is_lost << "\n";
     // std::cout << "B interpolated \n";
 
     // std::cout << "r=" << r << "\t" << x << "\t" << y << "\t" << p.v_par << "\t" << surface_dist << "\n";
@@ -422,18 +425,31 @@ void trace_particle(particle_t& p, double* rrange_arr, double* zrange_arr, doubl
     calc_derivs(state, derivs, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, m, q, -1);
     mu = p.v_perp*p.v_perp/(2*derivs[4]);
 
+    double k2_state[4];
+    double k3_state[4];
+    double k4_state[4];
+
+    // won't use the surface distance element
+    double k2[5];
+    double k3[5];
+    double k4[5];
+
+    
     while(t < tmax){
         /*
         * Time step ODE
+        * runge-kutta 4 (see https://lpsa.swarthmore.edu/NumInt/NumIntFourth.html)
         */
+
+        // compute k1
         state[0] = p.x;
         state[1] = p.y;
         state[2] = p.z;
         state[3] = p.v_par;
-        // state[4] = p.v_perp;
 
         calc_derivs(state, derivs, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, m, q, mu);
 
+        // stop if particle lost
         surface_dist = derivs[5];
         if(surface_dist <= 0){
             std::cout << "particle lost\n";
@@ -441,13 +457,33 @@ void trace_particle(particle_t& p, double* rrange_arr, double* zrange_arr, doubl
             return;
         }
 
+        for(int i=0; i<4; ++i){
+            k2_state[i] = state[i] + derivs[i]*dt/2;
+        }
+        calc_derivs(k2_state, k2, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, m, q, mu);
+
+        for(int i=0; i<4; ++i){
+            k3_state[i] = state[i] + k2[i]*dt/2;
+        }
+        calc_derivs(k3_state, k3, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, m, q, mu);
+
+        for(int i=0; i<4; ++i){
+            k4_state[i] = state[i] + k3[i]*dt;
+        }
+        calc_derivs(k4_state, k4, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, m, q, mu);
 
         // update
-        std::cout << "x update: " << p.x << "\t" <<  derivs[0] <<  "\t" << derivs[0] * dt << "\n";
-        p.x += derivs[0] * dt;
-        p.y += derivs[1] * dt;
-        p.z += derivs[2] * dt;
-        p.v_par += derivs[3] * dt;
+        p.x += dt*(derivs[0] + 2*k2[0] + 2*k3[0] + k4[0])/6;
+        p.y += dt*(derivs[1] + 2*k2[1] + 2*k3[1] + k4[1])/6;
+        p.z += dt*(derivs[2] + 2*k2[2] + 2*k3[2] + k4[2])/6;
+        p.v_par += dt*(derivs[3] + 2*k2[3] + 2*k3[3] + k4[3])/6;
+
+        // // update
+        // std::cout << "x update: " << p.x << "\t" <<  derivs[0] <<  "\t" << derivs[0] * dt << "\n";
+        // p.x += derivs[0] * dt;
+        // p.y += derivs[1] * dt;
+        // p.z += derivs[2] * dt;
+        // p.v_par += derivs[3] * dt;
 
         t += dt;
         // std::cout << "updates complete \n";
