@@ -220,7 +220,7 @@ void calc_derivs(double* state, double* out, double* rrange_arr, double* zrange_
     double y = state[1];
     double z = state[2];
     double v_par = state[3];
-    double v_perp = state[4];
+    // double v_perp = state[4];
 
     std::cout << "load v_par " << v_par;
 
@@ -364,11 +364,15 @@ void calc_derivs(double* state, double* out, double* rrange_arr, double* zrange_
     cross_prod[1] = B[2]*nabla_normB[0] - B[0]*nabla_normB[2];
     cross_prod[2] = B[0]*nabla_normB[1] - B[1]*nabla_normB[0];
 
-    std::cout << "compute x deriv: " << v_par << "\t" << B[0] << "\t" << normB << "\t" << v_perp << "\t" << v_par << "\t" << cross_prod[0] << "\t" << m << "\t" << q << "\n";
+    std::cout << "compute x deriv: " << v_par << "\t" << B[0] << "\t" << normB << "\t" <<  v_par << "\t" << cross_prod[0] << "\t" << m << "\t" << q << "\n";
 
-    out[0] = v_par * B[0]/normB + (0.5*pow(v_perp, 2) + pow(v_par, 2))*cross_prod[0] * m/(q*pow(normB, 3));
-    out[1] = v_par * B[1]/normB + (0.5*pow(v_perp, 2) + pow(v_par, 2))*cross_prod[1] * m/(q*pow(normB, 3));
-    out[2] = v_par * B[2]/normB + (0.5*pow(v_perp, 2) + pow(v_par, 2))*cross_prod[2] * m/(q*pow(normB, 3));
+    double v_perp2 = 2*mu*normB;
+
+
+
+    out[0] = v_par * B[0]/normB + (0.5*v_perp2 + pow(v_par, 2))*cross_prod[0] * m/(q*pow(normB, 3));
+    out[1] = v_par * B[1]/normB + (0.5*v_perp2 + pow(v_par, 2))*cross_prod[1] * m/(q*pow(normB, 3));
+    out[2] = v_par * B[2]/normB + (0.5*v_perp2 + pow(v_par, 2))*cross_prod[2] * m/(q*pow(normB, 3));
 
     double BdotNablaNormB = B[0]*nabla_normB[0] + B[1]*nabla_normB[1] + B[2]*nabla_normB[2];
     out[3] = -mu*BdotNablaNormB;
@@ -405,12 +409,12 @@ void trace_particle(particle_t& p, double* rrange_arr, double* zrange_arr, doubl
     double t = 0.0;
     // for(int time_step=0; time_step<nsteps; ++time_step){
 
-    double state[5];
+    double state[4];
     state[0] = p.x;
     state[1] = p.y;
     state[2] = p.z;
     state[3] = p.v_par;
-    state[4] = p.v_perp;
+    // state[4] = p.v_perp;
 
     double derivs[5];
 
@@ -426,7 +430,7 @@ void trace_particle(particle_t& p, double* rrange_arr, double* zrange_arr, doubl
         state[1] = p.y;
         state[2] = p.z;
         state[3] = p.v_par;
-        state[4] = p.v_perp;
+        // state[4] = p.v_perp;
 
         calc_derivs(state, derivs, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, m, q, mu);
 
@@ -444,7 +448,6 @@ void trace_particle(particle_t& p, double* rrange_arr, double* zrange_arr, doubl
         p.y += derivs[1] * dt;
         p.z += derivs[2] * dt;
         p.v_par += derivs[3] * dt;
-        p.v_perp = sqrt(2*mu*derivs[4]);
 
         t += dt;
         // std::cout << "updates complete \n";
