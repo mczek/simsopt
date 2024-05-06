@@ -226,8 +226,11 @@ void calc_derivs(double* state, double* out, double* rrange_arr, double* zrange_
 
     // magnetic field quad points are in cylindrical coordinates
     double r = sqrt(x*x + y*y);
-    double phi = atan2(y, x);
-
+    double phi = atan2(y, x); 
+    
+    // keep phi positive
+    phi += (2*M_PI)*(phi < 0);
+    
     // index into mesh to obtain nearby points
     int i = (int) ((r - rrange_arr[0]) / r_grid_size) + 1;
     int j = (int) ((z - zrange_arr[0]) / z_grid_size) + 1;
@@ -452,7 +455,7 @@ void trace_particle(particle_t& p, double* rrange_arr, double* zrange_arr, doubl
         // stop if particle lost
         surface_dist = derivs[5];
         if(surface_dist <= 0){
-            std::cout << "particle lost\n";
+            std::cout << "particle lost " << t << "\t" << dt << "\n";
             p.has_left = true;
             return;
         }
@@ -537,8 +540,9 @@ extern "C" vector<bool> gpu_tracing(py::array_t<double> quad_pts, py::array_t<do
 
     // std::cout << "particles initialized \n";
 
-    double dt = 1e-3*0.5*M_PI/vtotal;
+    double dt = 1e-5*0.5*M_PI/vtotal;
     for(int p=0; p<nparticles; ++p){
+        std::cout << "tracing particle " << p << "\n";
         trace_particle(particles[p], rrange_arr, zrange_arr, phirange_arr, quadpts_arr, dt, tmax, m, q);
     }
 
