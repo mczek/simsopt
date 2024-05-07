@@ -53,7 +53,7 @@ extern "C" void addKernelWrapper(int *c, const int *a, const int *b, int size){
     addKernel<<<1, 256>>>(d_c, d_a, d_b, size);
 
     for(int i=0; i<size; ++i){
-        // std::cout << c[i] <<"\n";
+        // // std::cout << c[i] <<"\n";
     }
 
     cudaMemcpy(c, d_c, size*sizeof(int), cudaMemcpyDeviceToHost);
@@ -144,21 +144,21 @@ void dshape(double x, double h, double* dshape){
 //     double phi_rel = (phi - (k*phi_grid_size)) / phi_grid_size;
 
 
-//     std::cout << r << "\t" << -1*(r_rel*r_grid_size - r) << "\t" << r_grid_size << "\n";
-//     std::cout << z << "\t" << -1*(z_rel*z_grid_size - z) << "\t" << z_grid_size << "\n";
-//     std::cout << phi << "\t" << -1*(phi_rel*phi_grid_size - phi) << "\t" << phi_grid_size << "\n";
-//     std::cout << "using index " <<  (i*nz*nphi + j*nphi + k) << "\n";
-//     std::cout << quadpts_arr[4*(i*nz*nphi + j*nphi + k) + 3] << "\n";
-//     // std::cout << "grid point found \n";
+//     // std::cout << r << "\t" << -1*(r_rel*r_grid_size - r) << "\t" << r_grid_size << "\n";
+//     // std::cout << z << "\t" << -1*(z_rel*z_grid_size - z) << "\t" << z_grid_size << "\n";
+//     // std::cout << phi << "\t" << -1*(phi_rel*phi_grid_size - phi) << "\t" << phi_grid_size << "\n";
+//     // std::cout << "using index " <<  (i*nz*nphi + j*nphi + k) << "\n";
+//     // std::cout << quadpts_arr[4*(i*nz*nphi + j*nphi + k) + 3] << "\n";
+//     // // std::cout << "grid point found \n";
 
-//     // std::cout << "r_rel " << r_rel << "\t" << z_rel << "\t" << phi_rel << "\n";
+//     // // std::cout << "r_rel " << r_rel << "\t" << z_rel << "\t" << phi_rel << "\n";
 
 //     shape(r_rel, r_shape);
 //     shape(z_rel, z_shape);
 //     shape(phi_rel, phi_shape);
 
 
-//     // std::cout <<"shape set \n";
+//     // // std::cout <<"shape set \n";
 //     // accumulate interpolation of B
 //     B[0] = 0.0;
 //     B[1] = 0.0;            
@@ -167,7 +167,7 @@ void dshape(double x, double h, double* dshape){
 //     // interpolate the distance to the surface
 //     double surface_dist = 0.0;
 
-//     // std::cout << "starting B accumulation\n";
+//     // // std::cout << "starting B accumulation\n";
 //     // quad pts are indexed r z phi
 //     bool is_lost = false;
 //     for(int ii=0; ii<=3; ++ii){             
@@ -177,17 +177,17 @@ void dshape(double x, double h, double* dshape){
 
 //                 if ((i+ii >= 0 & i+ii < nr) & (j+jj >= 0 & j+jj < nz)){
 //                     int start = 4*((i+ii)*nz*nphi + (j+jj)*nphi + (wrap_k));
-//                     // std::cout << "start=" << start << "\t" << 4*nr*nz*nphi << "\n";
+//                     // // std::cout << "start=" << start << "\t" << 4*nr*nz*nphi << "\n";
 //                     B[0] += quadpts_arr[start]   * r_shape[ii]*z_shape[jj]*phi_shape[kk];
 //                     B[1] += quadpts_arr[start+1] * r_shape[ii]*z_shape[jj]*phi_shape[kk];
 //                     B[2] += quadpts_arr[start+2] * r_shape[ii]*z_shape[jj]*phi_shape[kk];
 
 //                     is_lost = is_lost || (quadpts_arr[start+3] < 0); 
-//                     // std::cout << ii << "\t" << jj << "\t" << kk << "\n";
-//                     // std::cout << "interp surface dist val: " << quadpts_arr[start+3] << "\n";
+//                     // // std::cout << ii << "\t" << jj << "\t" << kk << "\n";
+//                     // // std::cout << "interp surface dist val: " << quadpts_arr[start+3] << "\n";
 //                     surface_dist += quadpts_arr[start+3] * r_shape[ii]*z_shape[jj]*phi_shape[kk];
 //                 } else{
-//                     // std::cout << "bad grid index for" << r << "\t" << phi << "\t" << z <<"\n"; 
+//                     // // std::cout << "bad grid index for" << r << "\t" << phi << "\t" << z <<"\n"; 
 //                 }
 
 //             }
@@ -222,7 +222,7 @@ void calc_derivs(double* state, double* out, double* rrange_arr, double* zrange_
     double v_par = state[3];
     // double v_perp = state[4];
 
-    std::cout << "load v_par " << v_par;
+    // std::cout << "load v_par " << v_par;
 
     // magnetic field quad points are in cylindrical coordinates
     double r = sqrt(x*x + y*y);
@@ -232,12 +232,13 @@ void calc_derivs(double* state, double* out, double* rrange_arr, double* zrange_
     phi += (2*M_PI)*(phi < 0);
     
     // index into mesh to obtain nearby points
-    int i = (int) ((r - rrange_arr[0]) / r_grid_size) + 1;
-    int j = (int) ((z - zrange_arr[0]) / z_grid_size) + 1;
-    int k = (int) (phi / phi_grid_size) + 1;
+    // get correct "meta grid" for continuity
+    int i = 4*((int) ((r - rrange_arr[0]) / r_grid_size) / 4);
+    int j = 4*((int) ((z - zrange_arr[0]) / z_grid_size) / 4);
+    int k = 4*((int) (phi / phi_grid_size) / 4);
 
-    std::cout << "indices: " << i << "\t" << r << "\t" << rrange_arr[0] << "\t" << r_grid_size << "\n";
-    std::cout << "position: " << x << "\t" << y << "\t" << z <<"\n";
+    // std::cout << "indices: " << i << "\t" << r << "\t" << rrange_arr[0] << "\t" << r_grid_size << "\n";
+    // std::cout << "position: " << x << "\t" << y << "\t" << z <<"\n";
 
     // normalized positions in local grid wrt e.g. r at index i
     int nr = rrange_arr[2];
@@ -248,22 +249,22 @@ void calc_derivs(double* state, double* out, double* rrange_arr, double* zrange_
     double phi_rel = (phi - (k*phi_grid_size)) / phi_grid_size;
 
 
-    std::cout << r << "\t" << -1*(r_rel*r_grid_size - r) << "\t" << r_grid_size << "\n";
-    std::cout << z << "\t" << -1*(z_rel*z_grid_size - z) << "\t" << z_grid_size << "\n";
-    std::cout << phi << "\t" << -1*(phi_rel*phi_grid_size - phi) << "\t" << phi_grid_size << "\n";
-    std::cout << i << "\t" << j << "\t" << k << "\n";
-    std::cout << "using index " <<  (i*nz*nphi + j*nphi + k) << "\n";
-    std::cout << quadpts_arr[4*(i*nz*nphi + j*nphi + k) + 3] << "\n";
-    // std::cout << "grid point found \n";
+    // std::cout << r << "\t" << -1*(r_rel*r_grid_size - r) << "\t" << r_grid_size << "\n";
+    // std::cout << z << "\t" << -1*(z_rel*z_grid_size - z) << "\t" << z_grid_size << "\n";
+    // std::cout << phi << "\t" << -1*(phi_rel*phi_grid_size - phi) << "\t" << phi_grid_size << "\n";
+    // std::cout << i << "\t" << j << "\t" << k << "\n";
+    // std::cout << "using index " <<  (i*nz*nphi + j*nphi + k) << "\n";
+    // std::cout << quadpts_arr[4*(i*nz*nphi + j*nphi + k) + 3] << "\n";
+    // // std::cout << "grid point found \n";
 
-    // std::cout << "r_rel " << r_rel << "\t" << z_rel << "\t" << phi_rel << "\n";
+    // // std::cout << "r_rel " << r_rel << "\t" << z_rel << "\t" << phi_rel << "\n";
 
     shape(r_rel, r_shape);
     shape(z_rel, z_shape);
     shape(phi_rel, phi_shape);
 
 
-    // std::cout <<"shape set \n";
+    // // std::cout <<"shape set \n";
     // accumulate interpolation of B
     B[0] = 0.0;
     B[1] = 0.0;            
@@ -272,39 +273,44 @@ void calc_derivs(double* state, double* out, double* rrange_arr, double* zrange_
     // interpolate the distance to the surface
     double surface_dist = 0.0;
 
-    // std::cout << "starting B accumulation\n";
+    // // std::cout << "starting B accumulation\n";
     // quad pts are indexed r z phi
     bool is_lost = false;
     for(int ii=0; ii<=3; ++ii){             
         for(int jj=0; jj<=3; ++jj){                 
             for(int kk=0; kk<=3; ++kk){
-                int wrap_k = ((k+kk-1) % nphi) + 1;
-
+                int wrap_k = ((k+kk) % nphi);
                 if ((i+ii >= 0 & i+ii < nr) & (j+jj >= 0 & j+jj < nz)){
                     int start = 4*((i+ii)*nz*nphi + (j+jj)*nphi + (wrap_k));
-                    // std::cout << "start=" << start << "\t" << 4*nr*nz*nphi << "\n";
+                    // // std::cout << "start=" << start << "\t" << 4*nr*nz*nphi << "\n";
                     B[0] += quadpts_arr[start]   * r_shape[ii]*z_shape[jj]*phi_shape[kk];
                     B[1] += quadpts_arr[start+1] * r_shape[ii]*z_shape[jj]*phi_shape[kk];
                     B[2] += quadpts_arr[start+2] * r_shape[ii]*z_shape[jj]*phi_shape[kk];
 
                     is_lost = is_lost || (quadpts_arr[start+3] < 0); 
-                    // std::cout << ii << "\t" << jj << "\t" << kk << "\n";
-                    // std::cout << "interp surface dist val: " << quadpts_arr[start+3] << "\n";
+                    // // std::cout << ii << "\t" << jj << "\t" << kk << "\n";
+                    // // std::cout << "interp surface dist val: " << quadpts_arr[start+3] << "\n";
                     surface_dist += quadpts_arr[start+3] * r_shape[ii]*z_shape[jj]*phi_shape[kk];
                 } else{
-                    // std::cout << "bad grid index for" << r << "\t" << phi << "\t" << z <<"\n"; 
+                    // // std::cout << "bad grid index for" << r << "\t" << phi << "\t" << z <<"\n"; 
                 }
 
             }
         }
     }
 
-    std::cout << "is quad pt lost: " << is_lost << "\n";
-    // std::cout << "B interpolated \n";
+    // std::cout << "k " << k << "\t" << nphi << "\n";
 
-    // std::cout << "r=" << r << "\t" << x << "\t" << y << "\t" << p.v_par << "\t" << surface_dist << "\n";
 
-    // std::cout << "particle not lost \n";
+    // std::cout << "is quad pt lost: " << is_lost << "\n";
+    if(!is_lost){ // can't lose a particle if no quad pts are lost
+        surface_dist = 1.0;    
+    }
+    // // std::cout << "B interpolated \n";
+
+    // // std::cout << "r=" << r << "\t" << x << "\t" << y << "\t" << p.v_par << "\t" << surface_dist << "\n";
+
+    // // std::cout << "particle not lost \n";
 
     //  Interpolate grad B: columns are partial deriv wrt r, z, phi, rows are entries of B
     //  row major order
@@ -318,10 +324,10 @@ void calc_derivs(double* state, double* out, double* rrange_arr, double* zrange_
     for(int ii=0; ii<=3; ++ii){             
         for(int jj=0; jj<=3; ++jj){                 
             for(int kk=0; kk<=3; ++kk){
-                int wrap_k = ((k+kk-1) % nphi) + 1;
+                int wrap_k = ((k+kk) % nphi);
                 if ((i+ii >= 0 & i+ii < nr) & (j+jj >= 0 & j+jj < nz)){
                     int start = 4*((i+ii)*nz*nphi + (j+jj)*nphi + (wrap_k));
-                    // interpolate gradient for each entry of B, filling in each column of the gradient
+                    // interpolate gradient for each entry of B, filling in each row of the gradient
                     for(int l=0; l<3; ++l){
                         double Bval = quadpts_arr[start+l];
                         grad_B[3*l]   += Bval * r_dshape[ii]*z_shape[jj]*phi_shape[kk];
@@ -334,7 +340,7 @@ void calc_derivs(double* state, double* out, double* rrange_arr, double* zrange_
         }
     }
 
-    // std::cout << "grad B interpolated \n";
+    // // std::cout << "grad B interpolated \n";
 
 
     // convert gradient from cylindrical (r, z, phi) to cartesian coordinates (x, y, z)
@@ -351,37 +357,40 @@ void calc_derivs(double* state, double* out, double* rrange_arr, double* zrange_
         grad_B[3*l+1] = s*dfdr + c*dfdphi_divr;
     }
 
-
+    // std::cout << "B" << B[0] << "\t" << B[1] << "\t" << B[2] << "\n";
+    // std::cout << "grad_B" << grad_B[0] << "\t" << grad_B[1] << "\t" << grad_B[2] << "\n";
     // now compute derivatives
 
-    // std::cout << "starting updates \n";
+    // // std::cout << "starting updates \n";
 
     double normB = sqrt(B[0]*B[0] + B[1]*B[1] + B[2]*B[2]);
 
 
     // compute \nabla |B|
-    //  \nabla |B| = (\nabla B  B)(2 |B|)
-    nabla_normB[0] = (grad_B[0]*B[0] + grad_B[1]*B[1] + grad_B[2]*B[2]) / (2*normB);
-    nabla_normB[1] = (grad_B[3]*B[0] + grad_B[4]*B[1] + grad_B[5]*B[2]) / (2*normB);
-    nabla_normB[2] = (grad_B[6]*B[0] + grad_B[7]*B[1] + grad_B[8]*B[2]) / (2*normB);
+    //  \nabla |B| = (\nabla B  B) / (2 |B|)
+    nabla_normB[0] = (grad_B[0]*B[0] + grad_B[1]*B[1] + grad_B[2]*B[2]) / (normB);
+    nabla_normB[1] = (grad_B[3]*B[0] + grad_B[4]*B[1] + grad_B[5]*B[2]) / (normB);
+    nabla_normB[2] = (grad_B[6]*B[0] + grad_B[7]*B[1] + grad_B[8]*B[2]) / (normB);
 
     // compute B \times \nabla |B|
     cross_prod[0] = B[1]*nabla_normB[2] - B[2]*nabla_normB[1];
     cross_prod[1] = B[2]*nabla_normB[0] - B[0]*nabla_normB[2];
     cross_prod[2] = B[0]*nabla_normB[1] - B[1]*nabla_normB[0];
 
-    std::cout << "compute x deriv: " << v_par << "\t" << B[0] << "\t" << normB << "\t" <<  v_par << "\t" << cross_prod[0] << "\t" << m << "\t" << q << "\n";
+    // std::cout << "compute x deriv: " << v_par << "\t" << B[0] << "\t" << normB << "\t" <<  v_par << "\t" << cross_prod[0] << "\t" << m << "\t" << q << "\n";
 
     double v_perp2 = 2*mu*normB;
 
-
+    // std::cout << "should be 0: " << (0.5*v_perp2 + pow(v_par, 2))*cross_prod[0] * m/(q*pow(normB, 3)) << "\n";
+    // std::cout << "should be positive " << v_par * B[0]/normB << "\n";
+    // std::cout << "v_par" << v_par << "\n";
 
     out[0] = v_par * B[0]/normB + (0.5*v_perp2 + pow(v_par, 2))*cross_prod[0] * m/(q*pow(normB, 3));
     out[1] = v_par * B[1]/normB + (0.5*v_perp2 + pow(v_par, 2))*cross_prod[1] * m/(q*pow(normB, 3));
     out[2] = v_par * B[2]/normB + (0.5*v_perp2 + pow(v_par, 2))*cross_prod[2] * m/(q*pow(normB, 3));
 
     double BdotNablaNormB = B[0]*nabla_normB[0] + B[1]*nabla_normB[1] + B[2]*nabla_normB[2];
-    out[3] = -mu*BdotNablaNormB;
+    out[3] = -mu*BdotNablaNormB/normB;
     out[4] = normB;
     out[5] = surface_dist;
 
@@ -393,7 +402,7 @@ void trace_particle(particle_t& p, double* rrange_arr, double* zrange_arr, doubl
     double mu;
     int nsteps = (int) (tmax / dt);
     double surface_dist;
-    // std::cout << tmax << "\t" << dt << "\t" << nsteps << "\n";
+    // // std::cout << tmax << "\t" << dt << "\t" << nsteps << "\n";
     // double r_shape[4];
     // double phi_shape[4];
     // double z_shape[4];
@@ -439,6 +448,9 @@ void trace_particle(particle_t& p, double* rrange_arr, double* zrange_arr, doubl
 
     
     while(t < tmax){
+        std::cout << "position: " << p.x << "\t" << p.y << "\t" << p.z << "\t" << "t=" << t  << "\n";
+
+        // std::cout << "Time: " << t << "\n";
         /*
         * Time step ODE
         * runge-kutta 4 (see https://lpsa.swarthmore.edu/NumInt/NumIntFourth.html)
@@ -455,7 +467,7 @@ void trace_particle(particle_t& p, double* rrange_arr, double* zrange_arr, doubl
         // stop if particle lost
         surface_dist = derivs[5];
         if(surface_dist <= 0){
-            std::cout << "particle lost " << t << "\t" << dt << "\n";
+            std::cout << "particle lost: " << surface_dist << "\t" << t << "\t" << dt << "\n";
             p.has_left = true;
             return;
         }
@@ -476,20 +488,20 @@ void trace_particle(particle_t& p, double* rrange_arr, double* zrange_arr, doubl
         calc_derivs(k4_state, k4, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, m, q, mu);
 
         // update
-        p.x += dt*(derivs[0] + 2*k2[0] + 2*k3[0] + k4[0])/6;
-        p.y += dt*(derivs[1] + 2*k2[1] + 2*k3[1] + k4[1])/6;
-        p.z += dt*(derivs[2] + 2*k2[2] + 2*k3[2] + k4[2])/6;
+        p.x +=     dt*(derivs[0] + 2*k2[0] + 2*k3[0] + k4[0])/6;
+        p.y +=     dt*(derivs[1] + 2*k2[1] + 2*k3[1] + k4[1])/6;
+        p.z +=     dt*(derivs[2] + 2*k2[2] + 2*k3[2] + k4[2])/6;
         p.v_par += dt*(derivs[3] + 2*k2[3] + 2*k3[3] + k4[3])/6;
 
         // // update
-        // std::cout << "x update: " << p.x << "\t" <<  derivs[0] <<  "\t" << derivs[0] * dt << "\n";
+        // // // std::cout << "x update: " << p.x << "\t" <<  derivs[0] <<  "\t" << derivs[0] * dt << "\n";
         // p.x += derivs[0] * dt;
         // p.y += derivs[1] * dt;
         // p.z += derivs[2] * dt;
         // p.v_par += derivs[3] * dt;
 
         t += dt;
-        // std::cout << "updates complete \n";
+        // // std::cout << "updates complete \n";
 
     }
     return;
@@ -538,11 +550,11 @@ extern "C" vector<bool> gpu_tracing(py::array_t<double> quad_pts, py::array_t<do
         
     }
 
-    // std::cout << "particles initialized \n";
+    // // std::cout << "particles initialized \n";
 
-    double dt = 1e-5*0.5*M_PI/vtotal;
+    double dt = 1e-12;//  1e-4*0.5*M_PI/vtotal;
     for(int p=0; p<nparticles; ++p){
-        std::cout << "tracing particle " << p << "\n";
+        // std::cout << "tracing particle " << p << "\n";
         trace_particle(particles[p], rrange_arr, zrange_arr, phirange_arr, quadpts_arr, dt, tmax, m, q);
     }
 
