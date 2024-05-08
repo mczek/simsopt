@@ -10,6 +10,7 @@ typedef xt::pytensor<double, 2, xt::layout_type::row_major> PyTensor;
 using std::shared_ptr;
 using std::vector;
 namespace py = pybind11;
+#include <fmt/core.h>
 
 // #include <Eigen/Core>
 
@@ -212,7 +213,7 @@ void calc_derivs(double* state, double* out, double* rrange_arr, double* zrange_
     double cross_prod[3];
 
     double r_grid_size = (rrange_arr[1] - rrange_arr[0]) / (rrange_arr[2]-1);
-    double phi_grid_size = 2*M_PI / phirange_arr[2];
+    double phi_grid_size = 2*M_PI / (phirange_arr[2] - 1);
     double z_grid_size = (zrange_arr[1] - zrange_arr[0]) / (zrange_arr[2]-1);
     
 
@@ -231,11 +232,21 @@ void calc_derivs(double* state, double* out, double* rrange_arr, double* zrange_
     // keep phi positive
     phi += (2*M_PI)*(phi < 0);
     
+    // fmt::print("r z phi: {} {} {}\n", r, z, phi);
+    // std::cout << std::format("r z phi: {} {} {}\n", r, z , phi);
+    // std::cout << "x y z " << x << "\t" << y << "\t" << z << "\n";
+
+
     // index into mesh to obtain nearby points
     // get correct "meta grid" for continuity
-    int i = 4*((int) ((r - rrange_arr[0]) / r_grid_size) / 4);
-    int j = 4*((int) ((z - zrange_arr[0]) / z_grid_size) / 4);
-    int k = 4*((int) (phi / phi_grid_size) / 4);
+    int i = 3*((int) ((r - rrange_arr[0]) / r_grid_size) / 3);
+    int j = 3*((int) ((z - zrange_arr[0]) / z_grid_size) / 3);
+    int k = 3*((int) (phi / phi_grid_size) / 3);
+    // int k = 3*((int) ((phi+M_PI) / phi_grid_size) / 3);
+
+
+    // std::cout << "i j k " <<  i << "\t" << j << "\t" << k << "\n"; 
+    // std::cout << "phi_grid_size: " << phi_grid_size << "\n"; 
 
     // std::cout << "indices: " << i << "\t" << r << "\t" << rrange_arr[0] << "\t" << r_grid_size << "\n";
     // std::cout << "position: " << x << "\t" << y << "\t" << z <<"\n";
@@ -246,7 +257,9 @@ void calc_derivs(double* state, double* out, double* rrange_arr, double* zrange_
     int nz = zrange_arr[2];
     double r_rel = (r -  (rrange_arr[0] + i*r_grid_size)) / r_grid_size;
     double z_rel = (z -  (zrange_arr[0] + j*z_grid_size)) / z_grid_size;
+    // double phi_rel = M_PI*(2*(k % nphi) - nphi) / phi_grid_size;
     double phi_rel = (phi - (k*phi_grid_size)) / phi_grid_size;
+    // fmt::print("r_rel z_rel phi_rel: {} {} {}\n", r_rel, z_rel, phi_rel);
 
 
     // std::cout << r << "\t" << -1*(r_rel*r_grid_size - r) << "\t" << r_grid_size << "\n";
@@ -281,6 +294,7 @@ void calc_derivs(double* state, double* out, double* rrange_arr, double* zrange_
             for(int kk=0; kk<=3; ++kk){
                 int wrap_k = ((k+kk) % nphi);
                 if ((i+ii >= 0 & i+ii < nr) & (j+jj >= 0 & j+jj < nz)){
+                    // fmt::print("indices: {} {} {}\n", i+ii, j+jj, k+kk);
                     int start = 4*((i+ii)*nz*nphi + (j+jj)*nphi + (wrap_k));
                     // // std::cout << "start=" << start << "\t" << 4*nr*nz*nphi << "\n";
                     B[0] += quadpts_arr[start]   * r_shape[ii]*z_shape[jj]*phi_shape[kk];
@@ -357,7 +371,9 @@ void calc_derivs(double* state, double* out, double* rrange_arr, double* zrange_
         grad_B[3*l+1] = s*dfdr + c*dfdphi_divr;
     }
 
-    // std::cout << "B" << B[0] << "\t" << B[1] << "\t" << B[2] << "\n";
+    // fmt::print("B: {} {} {}\n", B[0], B[1], B[2]);
+    // std::cout << "B " << B[0] << "\t" << B[1] << "\t" << B[2] << "\n";
+    // return;
     // std::cout << "grad_B" << grad_B[0] << "\t" << grad_B[1] << "\t" << grad_B[2] << "\n";
     // now compute derivatives
 
@@ -446,10 +462,12 @@ void trace_particle(particle_t& p, double* rrange_arr, double* zrange_arr, doubl
     double k3[5];
     double k4[5];
 
-    
+    int counter = 0;
     while(t < tmax){
-        std::cout << "position: " << p.x << "\t" << p.y << "\t" << p.z << "\t" << "t=" << t  << "\n";
-
+        if(counter % 100000 == 0){
+            std::cout << "position: " << p.x << "\t" << p.y << "\t" << p.z << "\t" << "t=" << t  << "\n";
+        }
+        counter++;
         // std::cout << "Time: " << t << "\n";
         /*
         * Time step ODE
@@ -463,7 +481,7 @@ void trace_particle(particle_t& p, double* rrange_arr, double* zrange_arr, doubl
         state[3] = p.v_par;
 
         calc_derivs(state, derivs, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, m, q, mu);
-
+        // return;
         // stop if particle lost
         surface_dist = derivs[5];
         if(surface_dist <= 0){
@@ -518,8 +536,13 @@ extern "C" vector<bool> gpu_tracing(py::array_t<double> quad_pts, py::array_t<do
 
 
     //  read data in from python
-    py::buffer_info xyz_buf = xyz_init.request();
-    double* xyz_init_arr = static_cast<double*>(xyz_buf.ptr);
+    auto ptr = xyz_init.data();
+    int size = xyz_init.size();
+    double xyz_init_arr[size];
+    std::memcpy(xyz_init_arr, ptr, size * sizeof(double));
+
+    // py::buffer_info xyz_buf = xyz_init.request();
+    // double* xyz_init_arr = static_cast<double*>(xyz_buf.ptr);
     
     py::buffer_info vtang_buf = vtang.request();
     double* vtang_arr = static_cast<double*>(vtang_buf.ptr);
@@ -552,7 +575,7 @@ extern "C" vector<bool> gpu_tracing(py::array_t<double> quad_pts, py::array_t<do
 
     // // std::cout << "particles initialized \n";
 
-    double dt = 1e-12;//  1e-4*0.5*M_PI/vtotal;
+    double dt = 1e-8;//  1e-4*0.5*M_PI/vtotal;
     for(int p=0; p<nparticles; ++p){
         // std::cout << "tracing particle " << p << "\n";
         trace_particle(particles[p], rrange_arr, zrange_arr, phirange_arr, quadpts_arr, dt, tmax, m, q);
