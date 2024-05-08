@@ -27,7 +27,7 @@ logger = logging.getLogger('simsopt.field.tracing')
 logger.setLevel(1)
 
 # If we're in the CI, make the run a bit cheaper:
-nparticles = 3 if in_github_actions else 10
+nparticles = 3 if in_github_actions else 100
 degree = 2 if in_github_actions else 3
 
 # Directory for output
@@ -52,20 +52,22 @@ s = SurfaceRZFourier.from_nphi_ntheta(mpol=mpol, ntor=ntor, stellsym=stellsym, n
 
 s.fit_to_curve(ma, 0.20, flip_theta=False)
 sc_particle = SurfaceClassifier(s, h=0.1, p=2)
-n = 16
+n = 32
 rs = np.linalg.norm(s.gamma()[:, :, 0:2], axis=2)
 zs = s.gamma()[:, :, 2]
 
 print("rs", rs)
 print("zs", zs)
 
-rrange = (np.min(rs), np.max(rs), 2*n)
-phirange = (0, 2*np.pi, n*2)
+rrange = (np.min(rs), np.max(rs), n)
+phirange = (0, 2*np.pi, 3*n-1)
 # exploit stellarator symmetry and only consider positive z values:
-zrange = (np.min(zs), np.max(zs), 2*n)
+zrange = (-np.max(zs), np.max(zs), n)
 bsh = InterpolatedField(
-    bs, degree, rrange, phirange, zrange, True, nfp=nfp, stellsym=True
+    bs, degree, rrange, phirange, zrange, True, nfp=1, stellsym=False
 )
+print("get points")
+print(bsh.get_points_cart())
 
 ### tracing functions to use gpu
 
@@ -161,9 +163,9 @@ def trace_particles_gpu(field,
     print(speed_par)
 
     rrange = (np.min(rs), np.max(rs), n)
-    phirange = (0, 2*np.pi, n*2)
+    phirange = (0, 2*np.pi, 3*n-1)
     # exploit stellarator symmetry and only consider positive z values:
-    zrange = (np.min(zs), np.max(zs), n//2)
+    zrange = (-np.max(zs), np.max(zs), n)
 
     r_vals = np.linspace(rrange[0], rrange[1], rrange[2])
     phi_vals = np.linspace(phirange[0], phirange[1], phirange[2])
@@ -180,6 +182,7 @@ def trace_particles_gpu(field,
     print(quad_pts)
     print(rrange)
     print("r", r_vals)
+    print(r_vals[16])
     print("z", z_vals)
     print("phi", phi_vals)
 
@@ -209,9 +212,19 @@ def trace_particles_gpu(field,
     print("max vals", max(vals))
     print(vals[2573])
 
+
+    print("simsopt B:")
+    bsh.set_points_cart(xyz_inits)
+    print(bsh.B())
+
+    print("simsopt real field:")
+    field.set_points_cart(xyz_inits)
+    print(field.B())
     # exit()
 
     init_dists = sc_particle.evaluate_xyz(xyz_inits)
+    print("xyz_inits")
+    print(xyz_inits)
     print(init_dists)
     # exit()
 
