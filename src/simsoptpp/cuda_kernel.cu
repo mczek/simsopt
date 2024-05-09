@@ -34,6 +34,21 @@ typedef struct particle_t {
     bool has_left;
 } particle_t;
 
+typedef struct workspace_t {
+    double r_shape[4];
+    double phi_shape[4];
+    double z_shape[4];
+
+    double r_dshape[4];
+    double phi_dshape[4];
+    double z_dshape[4];
+
+    double B[3];
+    double grad_B[9];
+    double nabla_normB[3];
+    double cross_prod[3];
+} workspace_t;
+
 __global__ void addKernel(int *c, const int* a, const int* b, int size){
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
     if(idx < size){
@@ -198,19 +213,19 @@ void dshape(double x, double h, double* dshape){
 // }
 
 // out contains derivatives for x , y, z, v_par, and then norm of B and surface distance interpolation
-void calc_derivs(double* state, double* out, double* rrange_arr, double* zrange_arr, double* phirange_arr, double* quadpts_arr, double m, double q, double mu){
-    double r_shape[4];
-    double phi_shape[4];
-    double z_shape[4];
+void calc_derivs(double* state, double* out, workspace_t workspace, double* rrange_arr, double* zrange_arr, double* phirange_arr, double* quadpts_arr, double m, double q, double mu){
+    // double r_shape[4];
+    // double phi_shape[4];
+    // double z_shape[4];
 
-    double r_dshape[4];
-    double phi_dshape[4];
-    double z_dshape[4];
+    // double r_dshape[4];
+    // double phi_dshape[4];
+    // double z_dshape[4];
 
-    double B[3];
-    double grad_B[9];
-    double nabla_normB[3];
-    double cross_prod[3];
+    // double B[3];
+    // double grad_B[9];
+    // double nabla_normB[3];
+    // double cross_prod[3];
 
     double r_grid_size = (rrange_arr[1] - rrange_arr[0]) / (rrange_arr[2]-1);
     double phi_grid_size = 2*M_PI / (phirange_arr[2] - 1);
@@ -272,16 +287,16 @@ void calc_derivs(double* state, double* out, double* rrange_arr, double* zrange_
 
     // // std::cout << "r_rel " << r_rel << "\t" << z_rel << "\t" << phi_rel << "\n";
 
-    shape(r_rel, r_shape);
-    shape(z_rel, z_shape);
-    shape(phi_rel, phi_shape);
+    shape(r_rel, workspace.r_shape);
+    shape(z_rel, workspace.z_shape);
+    shape(phi_rel, workspace.phi_shape);
 
 
     // // std::cout <<"shape set \n";
     // accumulate interpolation of B
-    B[0] = 0.0;
-    B[1] = 0.0;            
-    B[2] = 0.0;
+    workspace.B[0] = 0.0;
+    workspace.B[1] = 0.0;            
+    workspace.B[2] = 0.0;
 
     // interpolate the distance to the surface
     double surface_dist = 0.0;
@@ -297,14 +312,14 @@ void calc_derivs(double* state, double* out, double* rrange_arr, double* zrange_
                     // fmt::print("indices: {} {} {}\n", i+ii, j+jj, k+kk);
                     int start = 4*((i+ii)*nz*nphi + (j+jj)*nphi + (wrap_k));
                     // // std::cout << "start=" << start << "\t" << 4*nr*nz*nphi << "\n";
-                    B[0] += quadpts_arr[start]   * r_shape[ii]*z_shape[jj]*phi_shape[kk];
-                    B[1] += quadpts_arr[start+1] * r_shape[ii]*z_shape[jj]*phi_shape[kk];
-                    B[2] += quadpts_arr[start+2] * r_shape[ii]*z_shape[jj]*phi_shape[kk];
+                    workspace.B[0] += quadpts_arr[start]   * workspace.r_shape[ii]*workspace.z_shape[jj]*workspace.phi_shape[kk];
+                    workspace.B[1] += quadpts_arr[start+1] * workspace.r_shape[ii]*workspace.z_shape[jj]*workspace.phi_shape[kk];
+                    workspace.B[2] += quadpts_arr[start+2] * workspace.r_shape[ii]*workspace.z_shape[jj]*workspace.phi_shape[kk];
 
                     is_lost = is_lost || (quadpts_arr[start+3] < 0); 
                     // // std::cout << ii << "\t" << jj << "\t" << kk << "\n";
                     // // std::cout << "interp surface dist val: " << quadpts_arr[start+3] << "\n";
-                    surface_dist += quadpts_arr[start+3] * r_shape[ii]*z_shape[jj]*phi_shape[kk];
+                    surface_dist += quadpts_arr[start+3] * workspace.r_shape[ii]*workspace.z_shape[jj]*workspace.phi_shape[kk];
                 } else{
                     // // std::cout << "bad grid index for" << r << "\t" << phi << "\t" << z <<"\n"; 
                 }
@@ -329,11 +344,11 @@ void calc_derivs(double* state, double* out, double* rrange_arr, double* zrange_
     //  Interpolate grad B: columns are partial deriv wrt r, z, phi, rows are entries of B
     //  row major order
     for(int ii=0; ii<9; ++ii){
-        grad_B[ii] = 0.0;
+        workspace.grad_B[ii] = 0.0;
     }
-    dshape(r_rel, r_grid_size, r_dshape);
-    dshape(phi_rel, phi_grid_size, phi_dshape);
-    dshape(z_rel, z_grid_size, z_dshape);
+    dshape(r_rel, r_grid_size, workspace.r_dshape);
+    dshape(phi_rel, phi_grid_size, workspace.phi_dshape);
+    dshape(z_rel, z_grid_size, workspace.z_dshape);
 
     for(int ii=0; ii<=3; ++ii){             
         for(int jj=0; jj<=3; ++jj){                 
@@ -344,9 +359,9 @@ void calc_derivs(double* state, double* out, double* rrange_arr, double* zrange_
                     // interpolate gradient for each entry of B, filling in each row of the gradient
                     for(int l=0; l<3; ++l){
                         double Bval = quadpts_arr[start+l];
-                        grad_B[3*l]   += Bval * r_dshape[ii]*z_shape[jj]*phi_shape[kk];
-                        grad_B[3*l+1] += Bval * r_shape[ii]*z_dshape[jj]*phi_shape[kk];
-                        grad_B[3*l+2] += Bval * r_shape[ii]*z_shape[jj]*phi_dshape[kk];
+                        workspace.grad_B[3*l]   += Bval * workspace.r_dshape[ii]*workspace.z_shape[jj]*workspace.phi_shape[kk];
+                        workspace.grad_B[3*l+1] += Bval * workspace.r_shape[ii]*workspace.z_dshape[jj]*workspace.phi_shape[kk];
+                        workspace.grad_B[3*l+2] += Bval * workspace.r_shape[ii]*workspace.z_shape[jj]*workspace.phi_dshape[kk];
                     }
                 }
 
@@ -363,12 +378,12 @@ void calc_derivs(double* state, double* out, double* rrange_arr, double* zrange_
 
 
     for(int l=0; l<3; ++l){ // iter over row
-        double dfdr = grad_B[3*l];
-        double dfdphi_divr = grad_B[3*l+2] / r;
+        double dfdr = workspace.grad_B[3*l];
+        double dfdphi_divr = workspace.grad_B[3*l+2] / r;
         
-        grad_B[3*l]   = c*dfdr - s*dfdphi_divr;
-        grad_B[3*l+2] = grad_B[3*l+1]; // z index changes
-        grad_B[3*l+1] = s*dfdr + c*dfdphi_divr;
+        workspace.grad_B[3*l]   = c*dfdr - s*dfdphi_divr;
+        workspace.grad_B[3*l+2] = workspace.grad_B[3*l+1]; // z index changes
+        workspace.grad_B[3*l+1] = s*dfdr + c*dfdphi_divr;
     }
 
     // fmt::print("B: {} {} {}\n", B[0], B[1], B[2]);
@@ -379,19 +394,19 @@ void calc_derivs(double* state, double* out, double* rrange_arr, double* zrange_
 
     // // std::cout << "starting updates \n";
 
-    double normB = sqrt(B[0]*B[0] + B[1]*B[1] + B[2]*B[2]);
+    double normB = sqrt(workspace.B[0]*workspace.B[0] + workspace.B[1]*workspace.B[1] + workspace.B[2]*workspace.B[2]);
 
 
     // compute \nabla |B|
     //  \nabla |B| = (\nabla B  B) / (2 |B|)
-    nabla_normB[0] = (grad_B[0]*B[0] + grad_B[1]*B[1] + grad_B[2]*B[2]) / (normB);
-    nabla_normB[1] = (grad_B[3]*B[0] + grad_B[4]*B[1] + grad_B[5]*B[2]) / (normB);
-    nabla_normB[2] = (grad_B[6]*B[0] + grad_B[7]*B[1] + grad_B[8]*B[2]) / (normB);
+    workspace.nabla_normB[0] = (workspace.grad_B[0]*workspace.B[0] + workspace.grad_B[1]*workspace.B[1] + workspace.grad_B[2]*workspace.B[2]) / (normB);
+    workspace.nabla_normB[1] = (workspace.grad_B[3]*workspace.B[0] + workspace.grad_B[4]*workspace.B[1] + workspace.grad_B[5]*workspace.B[2]) / (normB);
+    workspace.nabla_normB[2] = (workspace.grad_B[6]*workspace.B[0] + workspace.grad_B[7]*workspace.B[1] + workspace.grad_B[8]*workspace.B[2]) / (normB);
 
     // compute B \times \nabla |B|
-    cross_prod[0] = B[1]*nabla_normB[2] - B[2]*nabla_normB[1];
-    cross_prod[1] = B[2]*nabla_normB[0] - B[0]*nabla_normB[2];
-    cross_prod[2] = B[0]*nabla_normB[1] - B[1]*nabla_normB[0];
+    workspace.cross_prod[0] = workspace.B[1]*workspace.nabla_normB[2] - workspace.B[2]*workspace.nabla_normB[1];
+    workspace.cross_prod[1] = workspace.B[2]*workspace.nabla_normB[0] - workspace.B[0]*workspace.nabla_normB[2];
+    workspace.cross_prod[2] = workspace.B[0]*workspace.nabla_normB[1] - workspace.B[1]*workspace.nabla_normB[0];
 
     // std::cout << "compute x deriv: " << v_par << "\t" << B[0] << "\t" << normB << "\t" <<  v_par << "\t" << cross_prod[0] << "\t" << m << "\t" << q << "\n";
 
@@ -401,11 +416,11 @@ void calc_derivs(double* state, double* out, double* rrange_arr, double* zrange_
     // std::cout << "should be positive " << v_par * B[0]/normB << "\n";
     // std::cout << "v_par" << v_par << "\n";
 
-    out[0] = v_par * B[0]/normB + (0.5*v_perp2 + pow(v_par, 2))*cross_prod[0] * m/(q*pow(normB, 3));
-    out[1] = v_par * B[1]/normB + (0.5*v_perp2 + pow(v_par, 2))*cross_prod[1] * m/(q*pow(normB, 3));
-    out[2] = v_par * B[2]/normB + (0.5*v_perp2 + pow(v_par, 2))*cross_prod[2] * m/(q*pow(normB, 3));
+    out[0] = v_par * workspace.B[0]/normB + (0.5*v_perp2 + pow(v_par, 2))*workspace.cross_prod[0] * m/(q*pow(normB, 3));
+    out[1] = v_par * workspace.B[1]/normB + (0.5*v_perp2 + pow(v_par, 2))*workspace.cross_prod[1] * m/(q*pow(normB, 3));
+    out[2] = v_par * workspace.B[2]/normB + (0.5*v_perp2 + pow(v_par, 2))*workspace.cross_prod[2] * m/(q*pow(normB, 3));
 
-    double BdotNablaNormB = B[0]*nabla_normB[0] + B[1]*nabla_normB[1] + B[2]*nabla_normB[2];
+    double BdotNablaNormB = workspace.B[0]*workspace.nabla_normB[0] + workspace.B[1]*workspace.nabla_normB[1] + workspace.B[2]*workspace.nabla_normB[2];
     out[3] = -mu*BdotNablaNormB/normB;
     out[4] = normB;
     out[5] = surface_dist;
@@ -449,8 +464,11 @@ void trace_particle(particle_t& p, double* rrange_arr, double* zrange_arr, doubl
 
     double derivs[5];
 
+
+    workspace_t workspace;
+
     // dummy call to get norm B
-    calc_derivs(state, derivs, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, m, q, -1);
+    calc_derivs(state, derivs, workspace, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, m, q, -1);
     mu = p.v_perp*p.v_perp/(2*derivs[4]);
 
     double k2_state[4];
@@ -462,11 +480,12 @@ void trace_particle(particle_t& p, double* rrange_arr, double* zrange_arr, doubl
     double k3[5];
     double k4[5];
 
+
     int counter = 0;
     while(t < tmax){
-        if(counter % 100000 == 0){
-            std::cout << "position: " << p.x << "\t" << p.y << "\t" << p.z << "\t" << "t=" << t  << "\n";
-        }
+        // if(counter % 100000 == 0){
+        //     std::cout << "position: " << p.x << "\t" << p.y << "\t" << p.z << "\t" << "t=" << t  << "\n";
+        // }
         counter++;
         // std::cout << "Time: " << t << "\n";
         /*
@@ -480,7 +499,7 @@ void trace_particle(particle_t& p, double* rrange_arr, double* zrange_arr, doubl
         state[2] = p.z;
         state[3] = p.v_par;
 
-        calc_derivs(state, derivs, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, m, q, mu);
+        calc_derivs(state, derivs, workspace, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, m, q, mu);
         // return;
         // stop if particle lost
         surface_dist = derivs[5];
@@ -493,17 +512,17 @@ void trace_particle(particle_t& p, double* rrange_arr, double* zrange_arr, doubl
         for(int i=0; i<4; ++i){
             k2_state[i] = state[i] + derivs[i]*dt/2;
         }
-        calc_derivs(k2_state, k2, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, m, q, mu);
+        calc_derivs(k2_state, k2, workspace, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, m, q, mu);
 
         for(int i=0; i<4; ++i){
             k3_state[i] = state[i] + k2[i]*dt/2;
         }
-        calc_derivs(k3_state, k3, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, m, q, mu);
+        calc_derivs(k3_state, k3, workspace, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, m, q, mu);
 
         for(int i=0; i<4; ++i){
             k4_state[i] = state[i] + k3[i]*dt;
         }
-        calc_derivs(k4_state, k4, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, m, q, mu);
+        calc_derivs(k4_state, k4, workspace, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, m, q, mu);
 
         // update
         p.x +=     dt*(derivs[0] + 2*k2[0] + 2*k3[0] + k4[0])/6;
