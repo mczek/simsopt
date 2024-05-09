@@ -32,6 +32,31 @@ typedef struct particle_t {
     double dotz;
     double dotv_par;
     bool has_left;
+
+    double r_shape[4];
+    double phi_shape[4];
+    double z_shape[4];
+
+    double r_dshape[4];
+    double phi_dshape[4];
+    double z_dshape[4];
+
+    double B[3];
+    double grad_B[9];
+    double nabla_normB[3];
+    double cross_prod[3];
+
+    double state[4];
+    double derivs[5];
+
+    double k2_state[4];
+    double k3_state[4];
+    double k4_state[4];
+
+    // won't use the surface distance element
+    double k2[5];
+    double k3[5];
+    double k4[5];
 } particle_t;
 
 __global__ void addKernel(int *c, const int* a, const int* b, int size){
@@ -98,104 +123,6 @@ void dshape(double x, double h, double* dshape){
     dshape[3] = ( (x-1.0)*(x-2.0)+x*(x-2.0)+x*(x-1.0))/(h*6.0);
     return;         
 }
-
-// state has 5 elements: current values of x,y,z,v_perp
-// // compute derivs for: x, y, z, v_perp
-// void calc_derivs(double* state, double* derivs, double* rrange_arr, double* zrange_arr, double* phirange_arr, double* quadpts_arr,
-//                         double dt, double tmax, double m, double q) {
-//     double x = state[0];
-//     double y = state[1];
-//     double z = state[2];
-//     double v_perp = state[3];
-
-//     double r_shape[4];
-//     double phi_shape[4];
-//     double z_shape[4];
-
-//     double r_dshape[4];
-//     double phi_dshape[4];
-//     double z_dshape[4];
-
-//     double B[3];
-//     double grad_B[9];
-//     double nabla_normB[3];
-//     double cross_prod[3];
-
-//     double r_grid_size = (rrange_arr[1] - rrange_arr[0]) / (rrange_arr[2]-1);
-//     double phi_grid_size = 2*M_PI / phirange_arr[2];
-//     double z_grid_size = (zrange_arr[1] - zrange_arr[0]) / (zrange_arr[2]-1);
-
-//     // interpolate B field for current state
-//     double r = sqrt(x*x + y*y);
-//     double phi = atan2(y, x);
-
-//     // index into mesh to obtain nearby points
-//     int i = (int) ((r - rrange_arr[0]) / r_grid_size) + 1;
-//     int j = (int) ((z - zrange_arr[0]) / z_grid_size) + 1;
-//     int k = (int) (phi / phi_grid_size) + 1;
-
-
-
-//     // normalized positions in local grid wrt e.g. r at index i
-//     int nr = rrange_arr[2];
-//     int nphi = phirange_arr[2];
-//     int nz = zrange_arr[2];
-//     double r_rel = (r -  (rrange_arr[0] + i*r_grid_size)) / r_grid_size;
-//     double z_rel = (z -  (zrange_arr[0] + j*z_grid_size)) / z_grid_size;
-//     double phi_rel = (phi - (k*phi_grid_size)) / phi_grid_size;
-
-
-//     // std::cout << r << "\t" << -1*(r_rel*r_grid_size - r) << "\t" << r_grid_size << "\n";
-//     // std::cout << z << "\t" << -1*(z_rel*z_grid_size - z) << "\t" << z_grid_size << "\n";
-//     // std::cout << phi << "\t" << -1*(phi_rel*phi_grid_size - phi) << "\t" << phi_grid_size << "\n";
-//     // std::cout << "using index " <<  (i*nz*nphi + j*nphi + k) << "\n";
-//     // std::cout << quadpts_arr[4*(i*nz*nphi + j*nphi + k) + 3] << "\n";
-//     // // std::cout << "grid point found \n";
-
-//     // // std::cout << "r_rel " << r_rel << "\t" << z_rel << "\t" << phi_rel << "\n";
-
-//     shape(r_rel, r_shape);
-//     shape(z_rel, z_shape);
-//     shape(phi_rel, phi_shape);
-
-
-//     // // std::cout <<"shape set \n";
-//     // accumulate interpolation of B
-//     B[0] = 0.0;
-//     B[1] = 0.0;            
-//     B[2] = 0.0;
-
-//     // interpolate the distance to the surface
-//     double surface_dist = 0.0;
-
-//     // // std::cout << "starting B accumulation\n";
-//     // quad pts are indexed r z phi
-//     bool is_lost = false;
-//     for(int ii=0; ii<=3; ++ii){             
-//         for(int jj=0; jj<=3; ++jj){                 
-//             for(int kk=0; kk<=3; ++kk){
-//                 int wrap_k = ((k+kk-1) % nphi) + 1;
-
-//                 if ((i+ii >= 0 & i+ii < nr) & (j+jj >= 0 & j+jj < nz)){
-//                     int start = 4*((i+ii)*nz*nphi + (j+jj)*nphi + (wrap_k));
-//                     // // std::cout << "start=" << start << "\t" << 4*nr*nz*nphi << "\n";
-//                     B[0] += quadpts_arr[start]   * r_shape[ii]*z_shape[jj]*phi_shape[kk];
-//                     B[1] += quadpts_arr[start+1] * r_shape[ii]*z_shape[jj]*phi_shape[kk];
-//                     B[2] += quadpts_arr[start+2] * r_shape[ii]*z_shape[jj]*phi_shape[kk];
-
-//                     is_lost = is_lost || (quadpts_arr[start+3] < 0); 
-//                     // // std::cout << ii << "\t" << jj << "\t" << kk << "\n";
-//                     // // std::cout << "interp surface dist val: " << quadpts_arr[start+3] << "\n";
-//                     surface_dist += quadpts_arr[start+3] * r_shape[ii]*z_shape[jj]*phi_shape[kk];
-//                 } else{
-//                     // // std::cout << "bad grid index for" << r << "\t" << phi << "\t" << z <<"\n"; 
-//                 }
-
-//             }
-//         }
-//     }
-
-// }
 
 // out contains derivatives for x , y, z, v_par, and then norm of B and surface distance interpolation
 void calc_derivs(double* state, double* out, double* rrange_arr, double* zrange_arr, double* phirange_arr, double* quadpts_arr, double m, double q, double mu){
@@ -440,18 +367,18 @@ void trace_particle(particle_t& p, double* rrange_arr, double* zrange_arr, doubl
     double t = 0.0;
     // for(int time_step=0; time_step<nsteps; ++time_step){
 
-    double state[4];
-    state[0] = p.x;
-    state[1] = p.y;
-    state[2] = p.z;
-    state[3] = p.v_par;
+    // double state[4];
+    p.state[0] = p.x;
+    p.state[1] = p.y;
+    p.state[2] = p.z;
+    p.state[3] = p.v_par;
     // state[4] = p.v_perp;
 
-    double derivs[5];
+    // double derivs[5];
 
     // dummy call to get norm B
-    calc_derivs(state, derivs, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, m, q, -1);
-    mu = p.v_perp*p.v_perp/(2*derivs[4]);
+    calc_derivs(p.state, p.derivs, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, m, q, -1);
+    mu = p.v_perp*p.v_perp/(2*p.derivs[4]);
 
     double k2_state[4];
     double k3_state[4];
@@ -464,9 +391,9 @@ void trace_particle(particle_t& p, double* rrange_arr, double* zrange_arr, doubl
 
     int counter = 0;
     while(t < tmax){
-        if(counter % 100000 == 0){
-            std::cout << "position: " << p.x << "\t" << p.y << "\t" << p.z << "\t" << "t=" << t  << "\n";
-        }
+        // if(counter % 100000 == 0){
+        //     std::cout << "position: " << p.x << "\t" << p.y << "\t" << p.z << "\t" << "t=" << t  << "\n";
+        // }
         counter++;
         // std::cout << "Time: " << t << "\n";
         /*
@@ -475,15 +402,15 @@ void trace_particle(particle_t& p, double* rrange_arr, double* zrange_arr, doubl
         */
 
         // compute k1
-        state[0] = p.x;
-        state[1] = p.y;
-        state[2] = p.z;
-        state[3] = p.v_par;
+        p.state[0] = p.x;
+        p.state[1] = p.y;
+        p.state[2] = p.z;
+        p.state[3] = p.v_par;
 
-        calc_derivs(state, derivs, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, m, q, mu);
+        calc_derivs(p.state, p.derivs, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, m, q, mu);
         // return;
         // stop if particle lost
-        surface_dist = derivs[5];
+        surface_dist = p.derivs[5];
         if(surface_dist <= 0){
             std::cout << "particle lost: " << surface_dist << "\t" << t << "\t" << dt << "\n";
             p.has_left = true;
@@ -491,25 +418,25 @@ void trace_particle(particle_t& p, double* rrange_arr, double* zrange_arr, doubl
         }
 
         for(int i=0; i<4; ++i){
-            k2_state[i] = state[i] + derivs[i]*dt/2;
+            k2_state[i] = p.state[i] + p.derivs[i]*dt/2;
         }
         calc_derivs(k2_state, k2, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, m, q, mu);
 
         for(int i=0; i<4; ++i){
-            k3_state[i] = state[i] + k2[i]*dt/2;
+            k3_state[i] = p.state[i] + k2[i]*dt/2;
         }
         calc_derivs(k3_state, k3, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, m, q, mu);
 
         for(int i=0; i<4; ++i){
-            k4_state[i] = state[i] + k3[i]*dt;
+            k4_state[i] = p.state[i] + k3[i]*dt;
         }
         calc_derivs(k4_state, k4, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, m, q, mu);
 
         // update
-        p.x +=     dt*(derivs[0] + 2*k2[0] + 2*k3[0] + k4[0])/6;
-        p.y +=     dt*(derivs[1] + 2*k2[1] + 2*k3[1] + k4[1])/6;
-        p.z +=     dt*(derivs[2] + 2*k2[2] + 2*k3[2] + k4[2])/6;
-        p.v_par += dt*(derivs[3] + 2*k2[3] + 2*k3[3] + k4[3])/6;
+        p.x +=     dt*(p.derivs[0] + 2*k2[0] + 2*k3[0] + k4[0])/6;
+        p.y +=     dt*(p.derivs[1] + 2*k2[1] + 2*k3[1] + k4[1])/6;
+        p.z +=     dt*(p.derivs[2] + 2*k2[2] + 2*k3[2] + k4[2])/6;
+        p.v_par += dt*(p.derivs[3] + 2*k2[3] + 2*k3[3] + k4[3])/6;
 
         // // update
         // // // std::cout << "x update: " << p.x << "\t" <<  derivs[0] <<  "\t" << derivs[0] * dt << "\n";
