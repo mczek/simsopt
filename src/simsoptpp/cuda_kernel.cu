@@ -81,24 +81,9 @@ extern "C" void addKernelWrapper(int *c, const int *a, const int *b, int size){
 
 
 
-__global__ void particle_trace_kernel(MagneticField<xt::pytensor> field, const double* xyz_init_arr,
-        double m, double q, double vtotal, const double* vtang_arr, double tmax, double tol, bool vacuum, int nparticles, 
-        tuple<vector<array<double, 5>>, vector<array<double, 6>>>* out){
-    int idx = threadIdx.x + blockIdx.x*blockDim.x;
-    if(idx < nparticles){
 
-        int start = 3*idx;
-        // array<double, 3> xyz_init_i = {xyz_init_arr[start], xyz_init_arr[start+1], xyz_init_arr[start+2]};
-        // typename MagneticField<xt::pytensor>::Tensor2 xyz({{xyz_init_arr[start], xyz_init_arr[start+1], xyz_init_arr[start+2]}});
-        // field.set_points(xyz);
-        
-    //     out[idx] = particle_guiding_center_tracing(field, xyz_init_i, m, q, vtotal, vtang_arr[idx], tmax, tol, vacuum, phis, stopping_criteria);
-    //     // res_all[idx] = std::get<0>(out_i);
-    //     // res_phi_hits_all[idx] = std::get<1>(out_i);
-    }
-}
 
-void shape(double x, double* shape){
+__host__ __device__ void shape(double x, double* shape){
     shape[0] = (1.0-x)*(2.0-x)*(3.0-x)/6.0;
     shape[1] = x*(2.0-x)*(3.0-x)/2.0;
     shape[2] = x*(x-1.0)*(3.0-x)/2.0;
@@ -106,7 +91,7 @@ void shape(double x, double* shape){
     return;         
 }
 
-void dshape(double x, double h, double* dshape){
+__host__ __device__ void dshape(double x, double h, double* dshape){
     dshape[0] = (-(2.0-x)*(3.0-x)-(1.0-x)*(3.0-x)-(1.0-x)*(2.0-x))/(h*6.0);
     dshape[1] = ( (2.0-x)*(3.0-x)-x*(3.0-x)-x*(2.0-x))/(h*2.0);
     dshape[2] = ( (x-1.0)*(3.0-x)+x*(3.0-x)-x*(x-1.0))/(h*2.0);
@@ -213,7 +198,7 @@ void dshape(double x, double h, double* dshape){
 // }
 
 // out contains derivatives for x , y, z, v_par, and then norm of B and surface distance interpolation
-void calc_derivs(double* state, double* out, double* workspace, double* rrange_arr, double* zrange_arr, double* phirange_arr, double* quadpts_arr, double m, double q, double mu){
+__host__ __device__ void calc_derivs(double* state, double* out, double* workspace, double* rrange_arr, double* zrange_arr, double* phirange_arr, double* quadpts_arr, double m, double q, double mu){
     double* r_shape = workspace + 40;
     double* z_shape = workspace + 44;
     double* phi_shape = workspace + 48;
@@ -428,7 +413,7 @@ void calc_derivs(double* state, double* out, double* workspace, double* rrange_a
 }
 
 
-void trace_particle(particle_t& p, double* workspace, double* rrange_arr, double* zrange_arr, double* phirange_arr, double* quadpts_arr,
+__host__ __device__ void trace_particle(particle_t& p, double* workspace, double* rrange_arr, double* zrange_arr, double* phirange_arr, double* quadpts_arr,
                         double dt, double tmax, double m, double q){
     double mu;
     int nsteps = (int) (tmax / dt);
@@ -499,7 +484,7 @@ void trace_particle(particle_t& p, double* workspace, double* rrange_arr, double
         // stop if particle lost
         surface_dist = derivs[5];
         if(surface_dist <= 0){
-            std::cout << "particle lost: " << surface_dist << "\t" << t << "\t" << dt << "\n";
+            // std::cout << "particle lost: " << surface_dist << "\t" << t << "\t" << dt << "\n";
             p.has_left = true;
             return;
         }
@@ -539,7 +524,13 @@ void trace_particle(particle_t& p, double* workspace, double* rrange_arr, double
     return;
 }
 
-
+__global__ void particle_trace_kernel(particle_t* particles, double* workspaces, double* rrange_arr, double* zrange_arr, double* phirange_arr, double* quadpts_arr,
+                        double dt, double tmax, double m, double q, int nparticles){
+    int idx = threadIdx.x + blockIdx.x*blockDim.x;
+    if(idx < nparticles){
+        trace_particle(particles[idx], workspaces + idx*100, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, dt, tmax, m, q);
+    }
+}
 
 extern "C" vector<bool> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> rrange,
         py::array_t<double> phirange, py::array_t<double> zrange, py::array_t<double> xyz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
@@ -575,7 +566,7 @@ extern "C" vector<bool> gpu_tracing(py::array_t<double> quad_pts, py::array_t<do
     double* zrange_arr = static_cast<double*>(z_buf.ptr);
 
 
-    particle_t particles[nparticles];
+    particle_t* particles =  new particle_t[nparticles];
     for(int i=0; i<nparticles; ++i){
         int start = 3*i;
         particles[i].x = xyz_init_arr[start];
@@ -614,10 +605,40 @@ extern "C" vector<bool> gpu_tracing(py::array_t<double> quad_pts, py::array_t<do
     // // std::cout << "particles initialized \n";
 
     double dt = 1e-8;//  1e-4*0.5*M_PI/vtotal;
-    for(int p=0; p<nparticles; ++p){
-        // std::cout << "tracing particle " << p << "\n";
-        trace_particle(particles[p], workspaces + p*workspace_size, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, dt, tmax, m, q);
-    }
+    // for(int p=0; p<nparticles; ++p){
+    //     // std::cout << "tracing particle " << p << "\n";
+    //     trace_particle(particles[p], workspaces + p*workspace_size, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, dt, tmax, m, q);
+    // }
+
+    particle_t* particles_d;
+    cudaMalloc((void**)&particles_d, nparticles * sizeof(particle_t));
+    cudaMemcpy(particles_d, particles, nparticles * sizeof(particle_t), cudaMemcpyHostToDevice);
+
+    double* rrange_d;
+    cudaMalloc((void**)&rrange_d, 3 * sizeof(double));
+    cudaMemcpy(rrange_d, rrange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
+
+    double* zrange_d;
+    cudaMalloc((void**)&zrange_d, 3 * sizeof(double));
+    cudaMemcpy(zrange_d, zrange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
+
+    double* phirange_d;
+    cudaMalloc((void**)&phirange_d, 3 * sizeof(double));
+    cudaMemcpy(phirange_d, phirange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
+
+
+    double* quadpts_d;
+    cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(double));
+    cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(double), cudaMemcpyHostToDevice);
+
+    double* workspaces_d;
+    cudaMalloc((void**)&workspaces_d, nparticles*workspace_size * sizeof(double));
+
+    int nthreads = 1;
+    int nblks = nparticles / nthreads + 1;
+    particle_trace_kernel<<<nblks, nthreads>>>(particles_d, workspaces_d, rrange_d, zrange_d, phirange_d, quadpts_d, dt, tmax, m, q, nparticles);
+
+    cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost);
 
     vector<bool> particle_loss(nparticles);
     for(int i=0; i<nparticles; ++i){
@@ -625,6 +646,7 @@ extern "C" vector<bool> gpu_tracing(py::array_t<double> quad_pts, py::array_t<do
     }
 
     delete[] workspaces;
+    delete[] particles;
 
     return particle_loss;
 }
