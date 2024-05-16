@@ -27,7 +27,7 @@ logger = logging.getLogger('simsopt.field.tracing')
 logger.setLevel(1)
 
 # If we're in the CI, make the run a bit cheaper:
-nparticles = 3 if in_github_actions else 100
+nparticles = 3 if in_github_actions else 1600
 degree = 2 if in_github_actions else 3
 
 # Directory for output
@@ -246,6 +246,7 @@ def trace_particles_gpu(field,
     # did_leave = sc_particle.evaluate_xyz(np.reshape(final_pos, (np)
     print("printing output")
     loss_ctr = sum(did_leave)
+    print(f'Particles lost {loss_ctr}/{nparticles}={(100*loss_ctr)//nparticles:d}%')
     logger.debug(f'Particles lost {loss_ctr}/{nparticles}={(100*loss_ctr)//nparticles:d}%')
     return did_leave
 

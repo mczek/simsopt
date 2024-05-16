@@ -634,7 +634,7 @@ extern "C" vector<bool> gpu_tracing(py::array_t<double> quad_pts, py::array_t<do
     double* workspaces_d;
     cudaMalloc((void**)&workspaces_d, nparticles*workspace_size * sizeof(double));
 
-    int nthreads = 1;
+    int nthreads = 8;
     int nblks = nparticles / nthreads + 1;
     particle_trace_kernel<<<nblks, nthreads>>>(particles_d, workspaces_d, rrange_d, zrange_d, phirange_d, quadpts_d, dt, tmax, m, q, nparticles);
 
