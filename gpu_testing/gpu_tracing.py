@@ -27,7 +27,7 @@ logger = logging.getLogger('simsopt.field.tracing')
 logger.setLevel(1)
 
 # If we're in the CI, make the run a bit cheaper:
-nparticles = 3 if in_github_actions else 1600
+nparticles = 3 if in_github_actions else 100
 degree = 2 if in_github_actions else 3
 
 # Directory for output
@@ -52,12 +52,12 @@ s = SurfaceRZFourier.from_nphi_ntheta(mpol=mpol, ntor=ntor, stellsym=stellsym, n
 
 s.fit_to_curve(ma, 0.20, flip_theta=False)
 sc_particle = SurfaceClassifier(s, h=0.1, p=2)
-n = 32
+n = 64
 rs = np.linalg.norm(s.gamma()[:, :, 0:2], axis=2)
 zs = s.gamma()[:, :, 2]
 
-print("rs", rs)
-print("zs", zs)
+# print("rs", rs)
+# print("zs", zs)
 
 rrange = (np.min(rs), np.max(rs), n)
 phirange = (0, 2*np.pi, 3*n-1)
@@ -66,8 +66,8 @@ zrange = (-np.max(zs), np.max(zs), n)
 bsh = InterpolatedField(
     bs, degree, rrange, phirange, zrange, True, nfp=1, stellsym=False
 )
-print("get points")
-print(bsh.get_points_cart())
+# print("get points")
+# print(bsh.get_points_cart())
 
 ### tracing functions to use gpu
 
@@ -158,9 +158,9 @@ def trace_particles_gpu(field,
     loss_ctr = 0
 
     # parallelization
-    print(type(xyz_inits))
-    print(xyz_inits)
-    print(speed_par)
+    # print(type(xyz_inits))
+    # print(xyz_inits)
+    # print(speed_par)
 
     rrange = (np.min(rs), np.max(rs), n)
     phirange = (0, 2*np.pi, 3*n-1)
@@ -177,14 +177,14 @@ def trace_particles_gpu(field,
             for k in range(phirange[2]):
                 quad_pts[zrange[2]*phirange[2]*i + phirange[2]*j + k, :] = [r_vals[i], z_vals[j], phi_vals[k]]
 
-    print(rrange[2]*zrange[2]*phirange[2])
-    print(quad_pts.shape)
-    print(quad_pts)
-    print(rrange)
-    print("r", r_vals)
-    print(r_vals[16])
-    print("z", z_vals)
-    print("phi", phi_vals)
+    # print(rrange[2]*zrange[2]*phirange[2])
+    # print(quad_pts.shape)
+    # print(quad_pts)
+    # print(rrange)
+    # print("r", r_vals)
+    # print(r_vals[16])
+    # print("z", z_vals)
+    # print("phi", phi_vals)
 
 
     # exit()
@@ -202,41 +202,41 @@ def trace_particles_gpu(field,
     bsh.set_points_cyl(rphiz_quadpts)
     quad_B = bsh.B() # note this is in cartesian coords
 
-    print(rphiz_quadpts)
+    # print(rphiz_quadpts)
     vals = sc_particle.evaluate_rphiz(rphiz_quadpts)
-    print("output vals")
-    print(vals)
+    # print("output vals")
+    # print(vals)
     vals = vals.reshape((quad_pts[:,0].shape[0], 1))
-    print("vals")
-    print(vals)
-    print("max vals", max(vals))
-    print(vals[2573])
+    # print("vals")
+    # print(vals)
+    # print("max vals", max(vals))
+    # print(vals[2573])
 
 
-    print("simsopt B:")
+    # print("simsopt B:")
     bsh.set_points_cart(xyz_inits)
-    print(bsh.B())
+    # print(bsh.B())
 
-    print("simsopt real field:")
+    # print("simsopt real field:")
     field.set_points_cart(xyz_inits)
-    print(field.B())
+    # print(field.B())
     # exit()
 
     init_dists = sc_particle.evaluate_xyz(xyz_inits)
-    print("xyz_inits")
-    print(xyz_inits)
-    print(init_dists)
+    # print("xyz_inits")
+    # print(xyz_inits)
+    # print(init_dists)
     # exit()
 
-    print(np.isnan(quad_B).sum())
+    # print(np.isnan(quad_B).sum())
     # exit()
 
     quad_info = np.hstack((quad_B, vals))
-    print(quad_B.shape)
-    print(vals.shape)
-    print("quad info")
-    print(quad_info)
-    print(quad_info[2573, :])
+    # print(quad_B.shape)
+    # print(vals.shape)
+    # print("quad info")
+    # print(quad_info)
+    # print(quad_info[2573, :])
 
     did_leave = sopp.gpu_tracing(
         quad_info, rrange,  phirange, zrange, xyz_inits,
@@ -244,7 +244,7 @@ def trace_particles_gpu(field,
         vacuum=(mode == 'gc_vac'), phis=phis, stopping_criteria=stopping_criteria, nparticles=nparticles)
 
     # did_leave = sc_particle.evaluate_xyz(np.reshape(final_pos, (np)
-    print("printing output")
+    # print("printing output")
     loss_ctr = sum(did_leave)
     print(f'Particles lost {loss_ctr}/{nparticles}={(100*loss_ctr)//nparticles:d}%')
     logger.debug(f'Particles lost {loss_ctr}/{nparticles}={(100*loss_ctr)//nparticles:d}%')
@@ -315,7 +315,9 @@ def trace_particles(bfield, label, mode='gc_vac'):
         phis=phis, tol=1e-9,
         stopping_criteria=[LevelsetStoppingCriterion(sc_particle.dist)], mode=mode,
         forget_exact_path=True)
-    print(did_leave)
+    # # print(did_leave)
+    # for i in range(len(did_leave)):
+    #     print(i, did_leave[i])
     t2 = time.time()
     proc0_print(f"Time for particle tracing={t2-t1:.3f}s.", flush=True)
     # if comm_world is None or comm_world.rank == 0:

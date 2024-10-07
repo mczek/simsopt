@@ -492,7 +492,7 @@ __host__  void trace_particle(particle_t& p, double* rrange_arr, double* zrange_
         // stop if particle lost
         surface_dist = derivs[5];
         if(surface_dist <= 0){
-            std::cout << "particle lost: " << surface_dist << "\t" << t << "\t" << dt << "\n";
+            // std::cout << "particle lost: " << surface_dist << "\t" << t << "\t" << dt << "\n";
             p.has_left = true;
             return;
         }
