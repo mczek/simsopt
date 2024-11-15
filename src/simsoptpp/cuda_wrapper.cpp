@@ -22,9 +22,9 @@ namespace py = pybind11;
 extern "C" void addKernelWrapper(int *c, const int *a, const int *b, int size);
 
 
-extern "C" vector<bool> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> rrange,
-        py::array_t<double> phirange, py::array_t<double> zrange, py::array_t<double> xyz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
-        double tmax, double tol, bool vacuum, vector<double> phis, vector<shared_ptr<StoppingCriterion>> stopping_criteria, int nparticles);
+extern "C" vector<bool> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
+        py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
+        double tmax, double tol, double psi0,  int nparticles);
 // PYBIND11_MODULE(cuda_module, m) {
 //     m.def("add_kernel", [](py::array_t<int> a, py::array_t<int> b){
 //         auto a_buf = a.request(), b_buf = b.request();

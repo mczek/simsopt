@@ -22,9 +22,9 @@ namespace py = pybind11;
 
 // Particle Data Structure
 typedef struct particle_t {
-    double x;  // Position X
-    double y;  // Position Y
-    double z;  // Position Z
+    double y1;  // Position Y1
+    double y2;  // Position Y2
+    double z;  // Position Zeta
     double v_par; // Velocity parallel
     double v_perp; // Velocity perpendicular
     double dotx;
@@ -69,7 +69,7 @@ extern "C" void addKernelWrapper(int *c, const int *a, const int *b, int size){
     addKernel<<<1, 256>>>(d_c, d_a, d_b, size);
 
     for(int i=0; i<size; ++i){
-        // // std::cout << c[i] <<"\n";
+        // // // std::cout << c[i] <<"\n";
     }
 
     cudaMemcpy(c, d_c, size*sizeof(int), cudaMemcpyDeviceToHost);
@@ -100,227 +100,159 @@ __host__ __device__ void dshape(double x, double h, double* dshape){
 }
 
 // out contains derivatives for x , y, z, v_par, and then norm of B and surface distance interpolation
-__host__ __device__ void calc_derivs(double* state, double* out, double* rrange_arr, double* zrange_arr, double* phirange_arr, double* quadpts_arr, double m, double q, double mu){
-    double r_shape[4];
-    double phi_shape[4];
-    double z_shape[4];
+__host__ void calc_derivs(double* state, double* out, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr, double m, double q, double mu, double psi0){
+    /*
+    * Returns     
+    out[0] = ds/dtime
+    out[1] = dtheta/dtime
+    out[2] = dzeta/dtime
 
-    double r_dshape[4];
-    double phi_dshape[4];
-    double z_dshape[4];
-
-    double B[3];
-    double grad_B[9];
-    double nabla_normB[3];
-    double cross_prod[3];
-
-    double r_grid_size = (rrange_arr[1] - rrange_arr[0]) / (rrange_arr[2]-1);
-    double phi_grid_size = 2*M_PI / (phirange_arr[2] - 1);
-    double z_grid_size = (zrange_arr[1] - zrange_arr[0]) / (zrange_arr[2]-1);
-    
-
-    double x = state[0];
-    double y = state[1];
-    double z = state[2];
-    double v_par = state[3];
-    // double v_perp = state[4];
-
-    // std::cout << "load v_par " << v_par;
-
-    // magnetic field quad points are in cylindrical coordinates
-    double r = sqrt(x*x + y*y);
-    double phi = atan2(y, x); 
-    
-    // keep phi positive
-    phi += (2*M_PI)*(phi < 0);
-    
-    // fmt::print("r z phi: {} {} {}\n", r, z, phi);
-    // std::cout << std::format("r z phi: {} {} {}\n", r, z , phi);
-    // std::cout << "x y z " << x << "\t" << y << "\t" << z << "\n";
-
-
-    // index into mesh to obtain nearby points
-    // get correct "meta grid" for continuity
-    int i = 3*((int) ((r - rrange_arr[0]) / r_grid_size) / 3);
-    int j = 3*((int) ((z - zrange_arr[0]) / z_grid_size) / 3);
-    int k = 3*((int) (phi / phi_grid_size) / 3);
-    // int k = 3*((int) ((phi+M_PI) / phi_grid_size) / 3);
-
-
-    // std::cout << "i j k " <<  i << "\t" << j << "\t" << k << "\n"; 
-    // std::cout << "phi_grid_size: " << phi_grid_size << "\n"; 
-
-    // std::cout << "indices: " << i << "\t" << r << "\t" << rrange_arr[0] << "\t" << r_grid_size << "\n";
-    // std::cout << "position: " << x << "\t" << y << "\t" << z <<"\n";
-
-    // normalized positions in local grid wrt e.g. r at index i
-    int nr = rrange_arr[2];
-    int nphi = phirange_arr[2];
-    int nz = zrange_arr[2];
-    double r_rel = (r -  (rrange_arr[0] + i*r_grid_size)) / r_grid_size;
-    double z_rel = (z -  (zrange_arr[0] + j*z_grid_size)) / z_grid_size;
-    // double phi_rel = M_PI*(2*(k % nphi) - nphi) / phi_grid_size;
-    double phi_rel = (phi - (k*phi_grid_size)) / phi_grid_size;
-    // fmt::print("r_rel z_rel phi_rel: {} {} {}\n", r_rel, z_rel, phi_rel);
-
-
-    // std::cout << r << "\t" << -1*(r_rel*r_grid_size - r) << "\t" << r_grid_size << "\n";
-    // std::cout << z << "\t" << -1*(z_rel*z_grid_size - z) << "\t" << z_grid_size << "\n";
-    // std::cout << phi << "\t" << -1*(phi_rel*phi_grid_size - phi) << "\t" << phi_grid_size << "\n";
-    // std::cout << i << "\t" << j << "\t" << k << "\n";
-    // std::cout << "using index " <<  (i*nz*nphi + j*nphi + k) << "\n";
-    // std::cout << quadpts_arr[4*(i*nz*nphi + j*nphi + k) + 3] << "\n";
-    // // std::cout << "grid point found \n";
-
-    // // std::cout << "r_rel " << r_rel << "\t" << z_rel << "\t" << phi_rel << "\n";
-
-    shape(r_rel, r_shape);
-    shape(z_rel, z_shape);
-    shape(phi_rel, phi_shape);
-
-
-    // // std::cout <<"shape set \n";
-    // accumulate interpolation of B
-    B[0] = 0.0;
-    B[1] = 0.0;            
-    B[2] = 0.0;
-
-    // interpolate the distance to the surface
-    double surface_dist = 0.0;
-
-    // // std::cout << "starting B accumulation\n";
-    // quad pts are indexed r z phi
-    bool is_lost = false;
-    for(int ii=0; ii<=3; ++ii){             
-        for(int jj=0; jj<=3; ++jj){                 
-            for(int kk=0; kk<=3; ++kk){
-                int wrap_k = ((k+kk) % nphi);
-                if ((i+ii >= 0 & i+ii < nr) & (j+jj >= 0 & j+jj < nz)){
-                    // fmt::print("indices: {} {} {}\n", i+ii, j+jj, k+kk);
-                    int start = 4*((i+ii)*nz*nphi + (j+jj)*nphi + (wrap_k));
-                    // // std::cout << "start=" << start << "\t" << 4*nr*nz*nphi << "\n";
-                    B[0] += quadpts_arr[start]   * r_shape[ii]*z_shape[jj]*phi_shape[kk];
-                    B[1] += quadpts_arr[start+1] * r_shape[ii]*z_shape[jj]*phi_shape[kk];
-                    B[2] += quadpts_arr[start+2] * r_shape[ii]*z_shape[jj]*phi_shape[kk];
-
-                    is_lost = is_lost || (quadpts_arr[start+3] < 0); 
-                    // // std::cout << ii << "\t" << jj << "\t" << kk << "\n";
-                    // // std::cout << "interp surface dist val: " << quadpts_arr[start+3] << "\n";
-                    surface_dist += quadpts_arr[start+3] * r_shape[ii]*z_shape[jj]*phi_shape[kk];
-                } else{
-                    // // std::cout << "bad grid index for" << r << "\t" << phi << "\t" << z <<"\n"; 
-                }
-
-            }
-        }
-    }
-
-    // std::cout << "k " << k << "\t" << nphi << "\n";
-
-
-    // std::cout << "is quad pt lost: " << is_lost << "\n";
-    if(!is_lost){ // can't lose a particle if no quad pts are lost
-        surface_dist = 1.0;    
-    }
-    // // std::cout << "B interpolated \n";
-
-    // // std::cout << "r=" << r << "\t" << x << "\t" << y << "\t" << p.v_par << "\t" << surface_dist << "\n";
-
-    // // std::cout << "particle not lost \n";
-
-    //  Interpolate grad B: columns are partial deriv wrt r, z, phi, rows are entries of B
-    //  row major order
-    for(int ii=0; ii<9; ++ii){
-        grad_B[ii] = 0.0;
-    }
-    dshape(r_rel, r_grid_size, r_dshape);
-    dshape(phi_rel, phi_grid_size, phi_dshape);
-    dshape(z_rel, z_grid_size, z_dshape);
-
-    for(int ii=0; ii<=3; ++ii){             
-        for(int jj=0; jj<=3; ++jj){                 
-            for(int kk=0; kk<=3; ++kk){
-                int wrap_k = ((k+kk) % nphi);
-                if ((i+ii >= 0 & i+ii < nr) & (j+jj >= 0 & j+jj < nz)){
-                    int start = 4*((i+ii)*nz*nphi + (j+jj)*nphi + (wrap_k));
-                    // interpolate gradient for each entry of B, filling in each row of the gradient
-                    for(int l=0; l<3; ++l){
-                        double Bval = quadpts_arr[start+l];
-                        grad_B[3*l]   += Bval * r_dshape[ii]*z_shape[jj]*phi_shape[kk];
-                        grad_B[3*l+1] += Bval * r_shape[ii]*z_dshape[jj]*phi_shape[kk];
-                        grad_B[3*l+2] += Bval * r_shape[ii]*z_shape[jj]*phi_dshape[kk];
-                    }
-                }
-
-            }
-        }
-    }
-
-    // // std::cout << "grad B interpolated \n";
-
-
-    // convert gradient from cylindrical (r, z, phi) to cartesian coordinates (x, y, z)
-    double c = cos(phi);
-    double s = sin(phi);
-
-
-    for(int l=0; l<3; ++l){ // iter over row
-        double dfdr = grad_B[3*l];
-        double dfdphi_divr = grad_B[3*l+2] / r;
-        
-        grad_B[3*l]   = c*dfdr - s*dfdphi_divr;
-        grad_B[3*l+2] = grad_B[3*l+1]; // z index changes
-        grad_B[3*l+1] = s*dfdr + c*dfdphi_divr;
-    }
-
-    // fmt::print("B: {} {} {}\n", B[0], B[1], B[2]);
-    // std::cout << "B " << B[0] << "\t" << B[1] << "\t" << B[2] << "\n";
-    // return;
-    // std::cout << "grad_B" << grad_B[0] << "\t" << grad_B[1] << "\t" << grad_B[2] << "\n";
-    // now compute derivatives
-
-    // // std::cout << "starting updates \n";
-
-    double normB = sqrt(B[0]*B[0] + B[1]*B[1] + B[2]*B[2]);
-
-
-    // compute \nabla |B|
-    //  \nabla |B| = (\nabla B  B) / (2 |B|)
-    nabla_normB[0] = (grad_B[0]*B[0] + grad_B[1]*B[1] + grad_B[2]*B[2]) / (normB);
-    nabla_normB[1] = (grad_B[3]*B[0] + grad_B[4]*B[1] + grad_B[5]*B[2]) / (normB);
-    nabla_normB[2] = (grad_B[6]*B[0] + grad_B[7]*B[1] + grad_B[8]*B[2]) / (normB);
-
-    // compute B \times \nabla |B|
-    cross_prod[0] = B[1]*nabla_normB[2] - B[2]*nabla_normB[1];
-    cross_prod[1] = B[2]*nabla_normB[0] - B[0]*nabla_normB[2];
-    cross_prod[2] = B[0]*nabla_normB[1] - B[1]*nabla_normB[0];
-
-    // std::cout << "compute x deriv: " << v_par << "\t" << B[0] << "\t" << normB << "\t" <<  v_par << "\t" << cross_prod[0] << "\t" << m << "\t" << q << "\n";
-
-    double v_perp2 = 2*mu*normB;
-
-    // std::cout << "should be 0: " << (0.5*v_perp2 + pow(v_par, 2))*cross_prod[0] * m/(q*pow(normB, 3)) << "\n";
-    // std::cout << "should be positive " << v_par * B[0]/normB << "\n";
-    // std::cout << "v_par" << v_par << "\n";
-
-    out[0] = v_par * B[0]/normB + (0.5*v_perp2 + pow(v_par, 2))*cross_prod[0] * m/(q*pow(normB, 3));
-    out[1] = v_par * B[1]/normB + (0.5*v_perp2 + pow(v_par, 2))*cross_prod[1] * m/(q*pow(normB, 3));
-    out[2] = v_par * B[2]/normB + (0.5*v_perp2 + pow(v_par, 2))*cross_prod[2] * m/(q*pow(normB, 3));
-
-    double BdotNablaNormB = B[0]*nabla_normB[0] + B[1]*nabla_normB[1] + B[2]*nabla_normB[2];
-    out[3] = -mu*BdotNablaNormB/normB;
+    out[3] = dvpar/dtime;
     out[4] = normB;
     out[5] = surface_dist;
+
+    */
+
+    int ns = srange_arr[2];
+    int nt = trange_arr[2];
+    int nz = zrange_arr[2];
+
+    // std::cout << "calling derivs with mu=\t" << mu << "\n";
+
+    // Need to interpolate modB, modB derivs, G, and iota
+    
+    double s_shape[4];
+    double t_shape[4];
+    double z_shape[4];
+
+    // double s_dshape[4];
+    // double t_dshape[4];
+    // double z_dshape[4];
+
+    // double B[3];
+    // double grad_B[9];
+    // double nabla_normB[3];
+    // double cross_prod[3];
+
+    double s_grid_size = srange_arr[1] / (srange_arr[2]-1);
+    double theta_grid_size = 2*M_PI / trange_arr[2];
+    double zeta_grid_size = 2*M_PI / zrange_arr[2];
+    
+
+    // Get Boozer coordinates of current position
+    double s = sqrt(state[0]*state[0] + state[1]*state[1]);
+    double theta = atan2(state[1], state[0]);
+    theta = fmod(theta, 2*M_PI);
+    theta += (2*M_PI)*(theta < 0);
+    double zeta = state[2];
+    zeta = fmod(zeta, 2*M_PI);
+    zeta += (2*M_PI)*(zeta < 0);
+    double v_par = state[3];
+
+    // std::cout << "s,t,z=" << s << "\t" << theta << "\t" << zeta << std::endl;
+
+    
+    // index into mesh to obtain nearby points
+    // get correct "meta grid" for continuity
+    // keeping stz order
+
+
+    // use nearest grid pts when s>1
+    // s = s > 1? (1 - 3*s_grid_size) : s;
+    int i = 3*((int) ((s / s_grid_size) / 3));
+    // if (i >= ns) {
+    //     std::cout << "s out of bounds " << std::endl;
+    // }
+    i = i >= ns ? 3*((int) ((srange_arr[1] - s_grid_size)/s_grid_size / 3)) : i;
+
+    int j = 3*((int) ((theta / theta_grid_size) / 3));
+    int k = 3*((int) ((zeta / zeta_grid_size) / 3));
+
+    // std::cout << "i,j,k=" << i << "\t" << j << "\t" << k << "\n";
+
+    // normalized positions in local grid wrt e.g. r at index i
+    // maps the position to [0,3] in the "meta grid"
+
+    double s_rel = (s -  i*s_grid_size) / s_grid_size;
+    double theta_rel = (theta -  j*theta_grid_size) / theta_grid_size;
+    double zeta_rel = (zeta - k*zeta_grid_size) / zeta_grid_size;
+    // std::cout << "s_rel,theta_rel,zeta_rel=" << s_rel << "\t" << theta_rel << "\t" << zeta_rel << std::endl;
+
+    // fill shape vectors
+    // this isn't particularly efficient
+    shape(s_rel, s_shape);
+    shape(theta_rel, t_shape);
+    shape(zeta_rel, z_shape);
+
+    /*
+    From here it remains to perform the necessary interpolations
+    As opposed to Cartesian coordinates, we don't need to monitor the surface dist via interpolation
+    We also don't need to calculate the derivative of any of the interpolations
+    This lets us interpolate everything in one set of nested loops 
+    */
+
+
+ 
+
+
+    // store interpolants in a common array, indexed the same as the columns of the quad info
+    // modB, derivs of modB, G, iota
+    double interpolants[6] = {0};
+
+    // std::cout << "interpolating" << std::endl;
+
+    // // quad pts are indexed s t z
+    for(int ii=0; ii<=3; ++ii){             
+        if((i+ii) < ns){
+            // some particles have drastic changes to s>1 in derivative calcs. We can't really make sense of this with our interpolation
+            for(int jj=0; jj<=3; ++jj){                 
+                int wrap_j = (j+jj) % nt;
+                for(int kk=0; kk<=3; ++kk){
+                    int wrap_k = (k+kk) % nz;
+                    int row_idx = (i+ii)*ns*nt + wrap_j*nt + wrap_k;
+                    
+                    double shape_val = s_shape[ii]*t_shape[jj]*z_shape[kk];
+                    for(int zz=0; zz<6; ++zz){
+                        // // std::cout << "accessing elt " << 6*row_idx + zz << "\n";
+                        interpolants[zz] += quadpts_arr[6*row_idx + zz];
+                        // if(zz == 0){
+                        //     // std::cout << quadpts_arr[6*row_idx + zz] << "\n";
+                        // }
+                        
+                    }
+                }
+            }
+        }
+    }
+
+    // for(int ii=0; ii<6; ++ii){
+    //     std::cout << interpolants[ii] << "\n";
+    // }
+
+    double fak1 = m*v_par*v_par/interpolants[0] + m*mu;
+    double sdot = -interpolants[2]*fak1 / (q*psi0);
+    double tdot = interpolants[1]*fak1 / (q*psi0) + interpolants[5]*v_par*interpolants[0]/interpolants[4];
+
+    out[0] = sdot*cos(theta) - s*sin(theta)*tdot;
+    out[1] = sdot*sin(theta) + s*cos(theta)*tdot;
+    out[2] = v_par*interpolants[0]/interpolants[4];
+    out[3] = -(interpolants[5]*interpolants[2] + interpolants[3])*mu*interpolants[0] / interpolants[4];
+
+   
+    out[4] = interpolants[0];
+    
 
 }
 
 
-__host__ __device__  void trace_particle(particle_t& p, double* rrange_arr, double* zrange_arr, double* phirange_arr, double* quadpts_arr,
-                        double dt, double tmax, double m, double q){
+__host__  void trace_particle(particle_t& p, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr,
+                        double dt, double tmax, double m, double q, double psi0){
+
+    // std::cout << "called trace_particle\n";
     double mu;
     int nsteps = (int) (tmax / dt);
     double surface_dist;
-    // // std::cout << tmax << "\t" << dt << "\t" << nsteps << "\n";
+    // // // std::cout << tmax << "\t" << dt << "\t" << nsteps << "\n";
     // double r_shape[4];
     // double phi_shape[4];
     // double z_shape[4];
@@ -342,8 +274,8 @@ __host__ __device__  void trace_particle(particle_t& p, double* rrange_arr, doub
     double t = 0.0;
 
     double state[4];
-    state[0] = p.x;
-    state[1] = p.y;
+    state[0] = p.y1;
+    state[1] = p.y2;
     state[2] = p.z;
     state[3] = p.v_par;
     // state[4] = p.v_perp;
@@ -351,7 +283,8 @@ __host__ __device__  void trace_particle(particle_t& p, double* rrange_arr, doub
     double derivs[6];
 
     // dummy call to get norm B
-    calc_derivs(state, derivs, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, m, q, -1);
+    std::cout << "dummy call to calc_derivs \n";
+    calc_derivs(state, derivs, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, -1, psi0);
     mu = p.v_perp*p.v_perp/(2*derivs[4]);
 
     const double a21 = 1.0 / 5.0;
@@ -371,10 +304,10 @@ __host__ __device__  void trace_particle(particle_t& p, double* rrange_arr, doub
     int counter = 0;
     while(t < tmax){
         // if(counter % 10 == 0){
-        //     std::cout << "position: " << p.x << "\t" << p.y << "\t" << p.z << "\t" << "t=" << t  << "\t dt= " << dt << "\n";
+        // std::cout << "position: " << p.y1 << "\t" << p.y2 << "\t" << p.z << "\t" << "t=" << t  << "\t dt= " << dt << "\n";
         // }
-        counter++;
-        // std::cout << "Time: " << t << "\n";
+
+        // // std::cout << "Time: " << t << "\n";
         /*
         * Time step ODE
         * runge-kutta 4 (see https://lpsa.swarthmore.edu/NumInt/NumIntFourth.html)
@@ -384,40 +317,37 @@ __host__ __device__  void trace_particle(particle_t& p, double* rrange_arr, doub
         */
 
         // compute k1
-        state[0] = p.x;
-        state[1] = p.y;
+        state[0] = p.y1;
+        state[1] = p.y2;
         state[2] = p.z;
         state[3] = p.v_par;
 
-        calc_derivs(state, derivs, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, m, q, mu);
-        // return;
+        calc_derivs(state, derivs, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, mu, psi0);
+        // std::cout << "k1 " << derivs[0] << "\t" << derivs[1] << "\t" << derivs[2] << "\t" << derivs[3] << "\n";
         // stop if particle lost
-        surface_dist = derivs[5];
-        if(surface_dist <= 0){
-            // std::cout << "particle lost: " << surface_dist << "\t" << t << "\t" << dt << "\n";
-            p.has_left = true;
-            return;
-        }
+ 
         
         // Compute k2
         for (int i = 0; i < 4; i++) x_temp[i] = state[i] + dt * a21 * derivs[i];
-        calc_derivs(x_temp, k2, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, m, q, mu);
+        calc_derivs(x_temp, k2, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, mu, psi0);
+        // std::cout << "k2 " << k2[0] << "\t" << k2[1] << "\t" << k2[2] << "\t" << k2[3] << "\n";
 
         // Compute k3
         for (int i = 0; i < 4; i++) x_temp[i] = state[i] + dt * (a31 * derivs[i] + a32 * k2[i]);
-        calc_derivs(x_temp, k3, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, m, q, mu);
+        calc_derivs(x_temp, k3, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, mu, psi0);
+        // std::cout << "k3 " << k3[0] << "\t" << k3[1] << "\t" << k3[2] << "\t" << k3[3] << "\n";
 
         // Compute k4
         for (int i = 0; i < 4; i++) x_temp[i] = state[i] + dt * (a41 * derivs[i] + a42 * k2[i] + a43 * k3[i]);
-        calc_derivs(x_temp, k4, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, m, q, mu);
+        calc_derivs(x_temp, k4, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, mu, psi0);
 
         // Compute k5
         for (int i = 0; i < 4; i++) x_temp[i] = state[i] + dt * (a51 * derivs[i] + a52 * k2[i] + a53 * k3[i] + a54 * k4[i]);
-        calc_derivs(x_temp, k5, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, m, q, mu);
+        calc_derivs(x_temp, k5, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, mu, psi0);
 
         // Compute k6
         for (int i = 0; i < 4; i++) x_temp[i] = state[i] + dt * (a61 * derivs[i] + a62 * k2[i] + a63 * k3[i] + a64 * k4[i] + a65 * k5[i]);
-        calc_derivs(x_temp, k6, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, m, q, mu);
+        calc_derivs(x_temp, k6, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, mu, psi0);
 
         // Compute new state
         for (int i = 0; i < 4; i++) {
@@ -425,74 +355,86 @@ __host__ __device__  void trace_particle(particle_t& p, double* rrange_arr, doub
         }
 
         // Compute k7 for error estimation
-        calc_derivs(x_new, k7, rrange_arr, zrange_arr, phirange_arr, quadpts_arr, m, q, mu);
+        calc_derivs(x_new, k7, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, mu, psi0);
         
         // Compute  error
         // https://live.boost.org/doc/libs/1_82_0/libs/numeric/odeint/doc/html/boost_numeric_odeint/odeint_in_detail/steppers.html
         double tol=1e-9;
-        // std::cout << "error elts \n";
+        // // std::cout << "error elts \n";
         double err = 0;
         bool accept = true;
         for (int i = 0; i < 4; i++) {
             x_err[i] = dt*(bhat1 * derivs[i] + bhat3 * k3[i] + bhat4 * k4[i] + bhat5 * k5[i] + bhat6 * k6[i] + bhat7 * k7[i]);
             x_err[i] = fabs(x_err[i]) / (tol + tol*(fabs(state[i]) + fabs(derivs[i])));      
-            // std::cout << std::abs(x_err[i]) << "\n";
+            // // std::cout << std::abs(x_err[i]) << "\n";
             err = fmax(err, x_err[i]);
         }
 
-        // std::cout << "err= " << err << "\n";
+        // // std::cout << "err= " << err << "\n";
 
         // Compute new step size
 
-        // std::cout << "intermediate val=" << 0.9*pow(err, -1.0/5.0) << "\n";
+        // // std::cout << "intermediate val=" << 0.9*pow(err, -1.0/5.0) << "\n";
         double dt_new = dt*0.9*pow(err, -1.0/5.0);
-        dt_new = fmax(dt_new, 0.2 * dt);  // Limit step size reduction
-        dt_new = fmin(dt_new, 5.0 * dt);  // Limit step size increase
+        dt_new = max(dt_new, 0.2 * dt);  // Limit step size reduction
+        dt_new = min(dt_new, 5.0 * dt);  // Limit step size increase
         if ((0.5 < err) & (err < 1.0)){
             dt_new = dt;
         }
         // dt_new = std::max(dt_new, 1e-9); // Limit smallest step size
-        // std::cout << "dt_new= " << dt_new << "\t dt=" << dt << "\n";
+        // // std::cout << "dt_new= " << dt_new << "\t dt=" << dt << "\n";
         if (err <= 1.0) {
-            // std::cout << "point accepted\n";
+            // // std::cout << "point accepted\n";
             // Accept the step
             t += dt;
-            dt = fmin(dt_new, tmax - t);
+            dt = min(dt_new, tmax - t);
 
-            p.x = x_new[0];
-            p.y = x_new[1];
+            p.y1 = x_new[0];
+            p.y2 = x_new[1];
             p.z = x_new[2];
+            p.z = fmod(p.z, 2*M_PI);
+            p.z += (2*M_PI)*(p.z < 0);
             p.v_par = x_new[3];
         } else {
             // Reject the step and try again with smaller dt
             dt = dt_new;
         }
 
+        double s = sqrt(p.y1*p.y1 + p.y2*p.y2);
+        if(s >= 1){
+            // // std::cout << "particle lost: " << surface_dist << "\t" << t << "\t" << dt << "\n";
+            p.has_left = true;
+            return;
+        }
+
+        counter++;
+
     }
     return;
 }
 
-__global__ void particle_trace_kernel(particle_t* particles, double* rrange_arr, double* zrange_arr, double* phirange_arr, double* quadpts_arr,
-                        double dt, double tmax, double m, double q, int nparticles){
-    int idx = threadIdx.x + blockIdx.x*blockDim.x;
-    if(idx < nparticles){
-        trace_particle(particles[idx], rrange_arr, zrange_arr, phirange_arr, quadpts_arr, dt, tmax, m, q);
-    }
-}
+// __global__ void particle_trace_kernel(particle_t* particles, double* rrange_arr, double* zrange_arr, double* phirange_arr, double* quadpts_arr,
+//                         double dt, double tmax, double m, double q, double psi0, int nparticles){
+//     int idx = threadIdx.x + blockIdx.x*blockDim.x;
+//     if(idx < nparticles){
+//         trace_particle(particles[idx], rrange_arr, zrange_arr, phirange_arr, quadpts_arr, dt, tmax, m, q, psi0);
+//     }
+// }
 
-extern "C" vector<bool> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> rrange,
-        py::array_t<double> phirange, py::array_t<double> zrange, py::array_t<double> xyz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
-        double tmax, double tol, bool vacuum, vector<double> phis, vector<shared_ptr<StoppingCriterion>> stopping_criteria, int nparticles){
+extern "C" vector<bool> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
+        py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
+        double tmax, double tol, double psi0, int nparticles){
 
-    vector<vector<array<double, 5>>> res_all(nparticles);
-    vector<vector<array<double, 6>>> res_phi_hits_all(nparticles);
+    // vector<vector<array<double, 5>>> res_all(nparticles);
+    // vector<vector<array<double, 6>>> res_phi_hits_all(nparticles);
 
+    // std::cout << "calling gpu tracing\n";
 
     //  read data in from python
-    auto ptr = xyz_init.data();
-    int size = xyz_init.size();
-    double xyz_init_arr[size];
-    std::memcpy(xyz_init_arr, ptr, size * sizeof(double));
+    auto ptr = stz_init.data();
+    int size = stz_init.size();
+    double stz_init_arr[size];
+    std::memcpy(stz_init_arr, ptr, size * sizeof(double));
 
     // py::buffer_info xyz_buf = xyz_init.request();
     // double* xyz_init_arr = static_cast<double*>(xyz_buf.ptr);
@@ -504,27 +446,39 @@ extern "C" vector<bool> gpu_tracing(py::array_t<double> quad_pts, py::array_t<do
     py::buffer_info quadpts_buf = quad_pts.request();
     double* quadpts_arr = static_cast<double*>(quadpts_buf.ptr);
 
-    py::buffer_info r_buf = rrange.request();
-    double* rrange_arr = static_cast<double*>(r_buf.ptr);
+    py::buffer_info s_buf = srange.request();
+    double* srange_arr = static_cast<double*>(s_buf.ptr);
 
-    py::buffer_info phi_buf = phirange.request();
-    double* phirange_arr = static_cast<double*>(phi_buf.ptr);
+    py::buffer_info t_buf = trange.request();
+    double* trange_arr = static_cast<double*>(t_buf.ptr);
 
     py::buffer_info z_buf = zrange.request();
     double* zrange_arr = static_cast<double*>(z_buf.ptr);
 
 
     particle_t* particles =  new particle_t[nparticles];
+
+    // convert to alternative coordinates
+    /*
+    * y1 = s*cos(theta)
+    * y2 = s*sin(theta)
+    */
+
+    // std::cout << "loading particles" << "\n";
     for(int i=0; i<nparticles; ++i){
         int start = 3*i;
-        particles[i].x = xyz_init_arr[start];
-        particles[i].y = xyz_init_arr[start+1];
-        particles[i].z = xyz_init_arr[start+2];
+        double s = stz_init_arr[start];
+        double theta = stz_init_arr[start+1];
+        particles[i].y1 = s*cos(theta);
+        particles[i].y2 = s*sin(theta);
+        particles[i].z = stz_init_arr[start+2];
         particles[i].v_par = vtang_arr[i];
         particles[i].v_perp = sqrt(vtotal*vtotal -  particles[i].v_par* particles[i].v_par);
         particles[i].has_left = false;
         
     }
+
+    // std::cout << "finished loading particles" << "\n";
 
     int workspace_size = 150;
     double* workspaces = new double[nparticles*workspace_size];
@@ -556,44 +510,44 @@ extern "C" vector<bool> gpu_tracing(py::array_t<double> quad_pts, py::array_t<do
     // 108-113 k7
 
     
-    // // std::cout << "particles initialized \n";
+    // // // std::cout << "particles initialized \n";
 
-    double dt = 1e-4*0.5*M_PI/vtotal;
-    // for(int p=0; p<nparticles; ++p){
-    //     // std::cout << "tracing particle " << p << "\n";
-    //     trace_particle(particles[p], rrange_arr, zrange_arr, phirange_arr, quadpts_arr, dt, tmax, m, q);
-    // }
+    double dt = 1e-5*0.5*M_PI/vtotal;
+    for(int p=0; p<nparticles; ++p){
+        // std::cout << "tracing particle " << p << "\n";
+        trace_particle(particles[p], srange_arr, zrange_arr, trange_arr, quadpts_arr, dt, tmax, m, q, psi0);
+    }
 
     
-    particle_t* particles_d;
-    cudaMalloc((void**)&particles_d, nparticles * sizeof(particle_t));
-    cudaMemcpy(particles_d, particles, nparticles * sizeof(particle_t), cudaMemcpyHostToDevice);
+    // particle_t* particles_d;
+    // cudaMalloc((void**)&particles_d, nparticles * sizeof(particle_t));
+    // cudaMemcpy(particles_d, particles, nparticles * sizeof(particle_t), cudaMemcpyHostToDevice);
 
-    double* rrange_d;
-    cudaMalloc((void**)&rrange_d, 3 * sizeof(double));
-    cudaMemcpy(rrange_d, rrange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
+    // double* srange_d;
+    // cudaMalloc((void**)&srange_d, 3 * sizeof(double));
+    // cudaMemcpy(srange_d, srange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
 
-    double* zrange_d;
-    cudaMalloc((void**)&zrange_d, 3 * sizeof(double));
-    cudaMemcpy(zrange_d, zrange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
+    // double* zrange_d;
+    // cudaMalloc((void**)&zrange_d, 3 * sizeof(double));
+    // cudaMemcpy(zrange_d, zrange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
 
-    double* phirange_d;
-    cudaMalloc((void**)&phirange_d, 3 * sizeof(double));
-    cudaMemcpy(phirange_d, phirange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
+    // double* trange_d;
+    // cudaMalloc((void**)&trange_d, 3 * sizeof(double));
+    // cudaMemcpy(trange_d, trange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
 
 
-    double* quadpts_d;
-    cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(double));
-    cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(double), cudaMemcpyHostToDevice);
+    // double* quadpts_d;
+    // cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(double));
+    // cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(double), cudaMemcpyHostToDevice);
 
-    // double* workspaces_d;
-    // cudaMalloc((void**)&workspaces_d, nparticles*workspace_size * sizeof(double));
+    // // double* workspaces_d;
+    // // cudaMalloc((void**)&workspaces_d, nparticles*workspace_size * sizeof(double));
 
-    int nthreads = 1;
-    int nblks = nparticles / nthreads + 1;
-    particle_trace_kernel<<<nblks, nthreads>>>(particles_d, rrange_d, zrange_d, phirange_d, quadpts_d, dt, tmax, m, q, nparticles);
+    // int nthreads = 1;
+    // int nblks = nparticles / nthreads + 1;
+    // particle_trace_kernel<<<nblks, nthreads>>>(particles_d, srange_d, zrange_d, trange_d, quadpts_d, dt, tmax, m, q, nparticles);
 
-    cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost);
+    // cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost);
 
     
     vector<bool> particle_loss(nparticles);
