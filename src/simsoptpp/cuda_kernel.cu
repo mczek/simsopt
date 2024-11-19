@@ -108,8 +108,8 @@ __host__ void calc_derivs(double* state, double* out, double* srange_arr, double
     out[2] = dzeta/dtime
 
     out[3] = dvpar/dtime;
-    out[4] = normB;
-    out[5] = surface_dist;
+    out[4] = modB;
+    
 
     */
 
@@ -120,20 +120,15 @@ __host__ void calc_derivs(double* state, double* out, double* srange_arr, double
     // std::cout << "calling derivs with mu=\t" << mu << "\n";
 
     // Need to interpolate modB, modB derivs, G, and iota
-    
+
+    // arrays to hold weights for interpolation    
     double s_shape[4];
     double t_shape[4];
     double z_shape[4];
 
-    // double s_dshape[4];
-    // double t_dshape[4];
-    // double z_dshape[4];
-
-    // double B[3];
-    // double grad_B[9];
-    // double nabla_normB[3];
-    // double cross_prod[3];
-
+    /*
+    * index into the grid and calculate weights
+    */ 
     double s_grid_size = srange_arr[1] / (srange_arr[2]-1);
     double theta_grid_size = 2*M_PI / trange_arr[2];
     double zeta_grid_size = 2*M_PI / zrange_arr[2];
@@ -142,31 +137,40 @@ __host__ void calc_derivs(double* state, double* out, double* srange_arr, double
     // Get Boozer coordinates of current position
     double s = sqrt(state[0]*state[0] + state[1]*state[1]);
     double theta = atan2(state[1], state[0]);
+    double zeta = state[2];
+    double v_par = state[3];
+
+    // map theta and zeta to [0, 2pi]
     theta = fmod(theta, 2*M_PI);
     theta += (2*M_PI)*(theta < 0);
-    double zeta = state[2];
+
     zeta = fmod(zeta, 2*M_PI);
     zeta += (2*M_PI)*(zeta < 0);
-    double v_par = state[3];
+
 
     // std::cout << "s,t,z=" << s << "\t" << theta << "\t" << zeta << std::endl;
 
     
+
+
     // index into mesh to obtain nearby points
     // get correct "meta grid" for continuity
     // keeping stz order
 
 
-    // use nearest grid pts when s>1
-    // s = s > 1? (1 - 3*s_grid_size) : s;
-    int i = 3*((int) ((s / s_grid_size) / 3));
-    // if (i >= ns) {
-    //     std::cout << "s out of bounds " << std::endl;
-    // }
-    i = i >= ns ? 3*((int) ((srange_arr[1] - s_grid_size)/s_grid_size / 3)) : i;
 
-    int j = 3*((int) ((theta / theta_grid_size) / 3));
-    int k = 3*((int) ((zeta / zeta_grid_size) / 3));
+    int i = 3*((int) (s / s_grid_size) / 3);
+    int j = 3*((int) (theta / theta_grid_size) / 3);
+    int k = 3*((int) (zeta / zeta_grid_size) / 3);
+
+    // std::cout << "i,j,k=" << i << "\t" << j << "\t" << k << std::endl;
+
+    // // use nearest grid pts when s>1
+    // if(i >= ns){
+    //     std::cout << "s=" << s << std::endl;
+    // }
+    i = min(ns-1, i);
+
 
     // std::cout << "i,j,k=" << i << "\t" << j << "\t" << k << "\n";
 
@@ -202,36 +206,42 @@ __host__ void calc_derivs(double* state, double* out, double* srange_arr, double
     // std::cout << "interpolating" << std::endl;
 
     // // quad pts are indexed s t z
-    for(int ii=0; ii<=3; ++ii){             
+    for(int ii=0; ii<=3; ++ii){ // s grid
         if((i+ii) < ns){
-            // some particles have drastic changes to s>1 in derivative calcs. We can't really make sense of this with our interpolation
-            for(int jj=0; jj<=3; ++jj){                 
+            for(int jj=0; jj<=3; ++jj){ // theta grid           
                 int wrap_j = (j+jj) % nt;
-                for(int kk=0; kk<=3; ++kk){
+                for(int kk=0; kk<=3; ++kk){ // zeta grid
                     int wrap_k = (k+kk) % nz;
-                    int row_idx = (i+ii)*ns*nt + wrap_j*nt + wrap_k;
+                    int row_idx = (i+ii)*nt*nz + wrap_j*nz + wrap_k;
                     
                     double shape_val = s_shape[ii]*t_shape[jj]*z_shape[kk];
+                    // std::cout << "modB interpolant: " << quadpts_arr[6*row_idx] << std::endl;
                     for(int zz=0; zz<6; ++zz){
                         // // std::cout << "accessing elt " << 6*row_idx + zz << "\n";
-                        interpolants[zz] += quadpts_arr[6*row_idx + zz];
+                        interpolants[zz] += quadpts_arr[6*row_idx + zz]*shape_val;
                         // if(zz == 0){
                         //     // std::cout << quadpts_arr[6*row_idx + zz] << "\n";
                         // }
                         
                     }
+                    // std::cout << "running modB interpolant: " << interpolants[0] << std::endl;
+
                 }
             }
         }
+
     }
 
     // for(int ii=0; ii<6; ++ii){
     //     std::cout << interpolants[ii] << "\n";
     // }
+    
+
 
     double fak1 = m*v_par*v_par/interpolants[0] + m*mu;
     double sdot = -interpolants[2]*fak1 / (q*psi0);
     double tdot = interpolants[1]*fak1 / (q*psi0) + interpolants[5]*v_par*interpolants[0]/interpolants[4];
+
 
     out[0] = sdot*cos(theta) - s*sin(theta)*tdot;
     out[1] = sdot*sin(theta) + s*cos(theta)*tdot;
@@ -250,8 +260,8 @@ __host__  void trace_particle(particle_t& p, double* srange_arr, double* trange_
 
     // std::cout << "called trace_particle\n";
     double mu;
-    int nsteps = (int) (tmax / dt);
-    double surface_dist;
+    // int nsteps = (int) (tmax / dt);
+    // double surface_dist;
     // // // std::cout << tmax << "\t" << dt << "\t" << nsteps << "\n";
     // double r_shape[4];
     // double phi_shape[4];
@@ -283,10 +293,13 @@ __host__  void trace_particle(particle_t& p, double* srange_arr, double* trange_
     double derivs[6];
 
     // dummy call to get norm B
-    std::cout << "dummy call to calc_derivs \n";
+    // std::cout << "dummy call to calc_derivs \n";
     calc_derivs(state, derivs, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, -1, psi0);
     mu = p.v_perp*p.v_perp/(2*derivs[4]);
 
+    // std::cout << "initial modB " << derivs[4] << std::endl; 
+
+    // std::cout << "modB interp " << derivs[4] << std::endl;
     const double a21 = 1.0 / 5.0;
     const double a31 = 3.0 / 40.0, a32 = 9.0 / 40.0;
     const double a41 = 44.0 / 45.0, a42 = -56.0 / 15.0, a43 = 32.0 / 9.0;
@@ -304,7 +317,7 @@ __host__  void trace_particle(particle_t& p, double* srange_arr, double* trange_
     int counter = 0;
     while(t < tmax){
         // if(counter % 10 == 0){
-        // std::cout << "position: " << p.y1 << "\t" << p.y2 << "\t" << p.z << "\t" << "t=" << t  << "\t dt= " << dt << "\n";
+        // std::cout << "position: " << p.y1 << "\t" << p.y2 << "\t" << p.z << "\t" << "t=" << t  << "\t dt= " << dt << std::endl;
         // }
 
         // // std::cout << "Time: " << t << "\n";
@@ -465,12 +478,18 @@ extern "C" vector<bool> gpu_tracing(py::array_t<double> quad_pts, py::array_t<do
     */
 
     // std::cout << "loading particles" << "\n";
+
+    // load initial conditions
     for(int i=0; i<nparticles; ++i){
         int start = 3*i;
+
         double s = stz_init_arr[start];
         double theta = stz_init_arr[start+1];
+        
+        // convert to alternative coordinates
         particles[i].y1 = s*cos(theta);
         particles[i].y2 = s*sin(theta);
+        
         particles[i].z = stz_init_arr[start+2];
         particles[i].v_par = vtang_arr[i];
         particles[i].v_perp = sqrt(vtotal*vtotal -  particles[i].v_par* particles[i].v_par);
@@ -480,8 +499,8 @@ extern "C" vector<bool> gpu_tracing(py::array_t<double> quad_pts, py::array_t<do
 
     // std::cout << "finished loading particles" << "\n";
 
-    int workspace_size = 150;
-    double* workspaces = new double[nparticles*workspace_size];
+    // int workspace_size = 150;
+    // double* workspaces = new double[nparticles*workspace_size];
 
     // workspace index mapping 
     // 0-3 is the state x,y,z, v_par
@@ -515,7 +534,7 @@ extern "C" vector<bool> gpu_tracing(py::array_t<double> quad_pts, py::array_t<do
     double dt = 1e-5*0.5*M_PI/vtotal;
     for(int p=0; p<nparticles; ++p){
         // std::cout << "tracing particle " << p << "\n";
-        trace_particle(particles[p], srange_arr, zrange_arr, trange_arr, quadpts_arr, dt, tmax, m, q, psi0);
+        trace_particle(particles[p], srange_arr, trange_arr, zrange_arr, quadpts_arr, dt, tmax, m, q, psi0);
     }
 
     
@@ -555,7 +574,7 @@ extern "C" vector<bool> gpu_tracing(py::array_t<double> quad_pts, py::array_t<do
         particle_loss[i] = particles[i].has_left;
     }
 
-    delete[] workspaces;
+    // delete[] workspaces;
     delete[] particles;
 
     return particle_loss;

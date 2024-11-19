@@ -126,6 +126,11 @@ class GuidingCenterVacuumBoozerRHS {
             dydt[1] = dmodBds*fak1/(q*psi0) + iota*v_par*modB/G;
             dydt[2] = v_par*modB/G;
             dydt[3] = -(iota*dmodBdtheta + dmodBdzeta)*mu*modB/G;
+
+            std::cout << "evaluating derivative" << std::endl;
+            if(ys[0] >= 1){
+                std::cout << "s=" << ys[0] << " G = " << G << "dydt[1]= " << dydt[1] << std::endl;
+            }
         }
 };
 
@@ -180,7 +185,10 @@ class GuidingCenterNoKBoozerRHS {
             double fak1 = m*v_par*v_par/modB + m*mu;
             double D = ((q + m*v_par*dIdpsi/modB)*G - (-q*iota + m*v_par*dGdpsi/modB)*I)/iota;
 
+
+
             dydt[0] = (I*dmodBdzeta - G*dmodBdtheta)*fak1/(D*iota*psi0);
+
             dydt[1] = (G*dmodBdpsi*fak1 - (-q*iota + m*v_par*dGdpsi/modB)*v_par*modB)/(D*iota);
             dydt[2] = ((q + m*v_par*dIdpsi/modB)*v_par*modB - dmodBdpsi*fak1*I)/(D*iota);
             dydt[3] = - (mu / v_par) * (dmodBdpsi * dydt[0] * psi0 + dmodBdtheta * dydt[1] + dmodBdzeta * dydt[2]);
