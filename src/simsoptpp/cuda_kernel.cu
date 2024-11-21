@@ -100,7 +100,7 @@ __host__ __device__ void dshape(double x, double h, double* dshape){
 }
 
 // out contains derivatives for x , y, z, v_par, and then norm of B and surface distance interpolation
-__host__ void calc_derivs(double* state, double* out, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr, double m, double q, double mu, double psi0){
+__host__ __device__ void calc_derivs(double* state, double* out, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr, double m, double q, double mu, double psi0){
     /*
     * Returns     
     out[0] = ds/dtime
@@ -255,32 +255,10 @@ __host__ void calc_derivs(double* state, double* out, double* srange_arr, double
 }
 
 
-__host__  void trace_particle(particle_t& p, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr,
+__host__ __device__  void trace_particle(particle_t& p, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr,
                         double dt, double tmax, double m, double q, double psi0){
 
-    // std::cout << "called trace_particle\n";
     double mu;
-    // int nsteps = (int) (tmax / dt);
-    // double surface_dist;
-    // // // std::cout << tmax << "\t" << dt << "\t" << nsteps << "\n";
-    // double r_shape[4];
-    // double phi_shape[4];
-    // double z_shape[4];
-
-    // double r_dshape[4];
-    // double phi_dshape[4];
-    // double z_dshape[4];
-
-    // double B[3];
-    // double grad_B[9];
-    // double nabla_normB[3];
-    // double cross_prod[3];
-
-    // double r_grid_size = (rrange_arr[1] - rrange_arr[0]) / (rrange_arr[2]-1);
-    // double phi_grid_size = 2*M_PI / phirange_arr[2];
-    // double z_grid_size = (zrange_arr[1] - zrange_arr[0]) / (zrange_arr[2]-1);
-    
-
     double t = 0.0;
 
     double state[4];
@@ -426,13 +404,13 @@ __host__  void trace_particle(particle_t& p, double* srange_arr, double* trange_
     return;
 }
 
-// __global__ void particle_trace_kernel(particle_t* particles, double* rrange_arr, double* zrange_arr, double* phirange_arr, double* quadpts_arr,
-//                         double dt, double tmax, double m, double q, double psi0, int nparticles){
-//     int idx = threadIdx.x + blockIdx.x*blockDim.x;
-//     if(idx < nparticles){
-//         trace_particle(particles[idx], rrange_arr, zrange_arr, phirange_arr, quadpts_arr, dt, tmax, m, q, psi0);
-//     }
-// }
+__global__ void particle_trace_kernel(particle_t* particles, double* rrange_arr, double* zrange_arr, double* phirange_arr, double* quadpts_arr,
+                        double dt, double tmax, double m, double q, double psi0, int nparticles){
+    int idx = threadIdx.x + blockIdx.x*blockDim.x;
+    if(idx < nparticles){
+        trace_particle(particles[idx], rrange_arr, zrange_arr, phirange_arr, quadpts_arr, dt, tmax, m, q, psi0);
+    }
+}
 
 extern "C" vector<bool> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
         py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
@@ -497,76 +475,41 @@ extern "C" vector<bool> gpu_tracing(py::array_t<double> quad_pts, py::array_t<do
         
     }
 
-    // std::cout << "finished loading particles" << "\n";
-
-    // int workspace_size = 150;
-    // double* workspaces = new double[nparticles*workspace_size];
-
-    // workspace index mapping 
-    // 0-3 is the state x,y,z, v_par
-    // 4-9 is the deriv at state = k1
-    // 10-13 k_2 state
-    // 14-19 k_2
-    // 20-23 k3_state
-    // 24-29 k3
-    // 30-33 k4_state
-    // 34-39 k4
-    // 40-43 r_shape
-    // 44-47 z_shape
-    // 48-51 phi_shape
-    // 52-55 r_dshape
-    // 56-59 z_dshape
-    // 60-63 phi_dshape
-    // 64-67 B
-    // 68-76 grad_B
-    // 77-79 nabla_normB
-    // 80-83 cross_prod
-    // 84-87 k5_state
-    // 88-93 k5
-    // 94-97 k6_state
-    // 98-103 k6
-    // 104-107 k7_state
-    // 108-113 k7
-
-    
-    // // // std::cout << "particles initialized \n";
+   
 
     double dt = 1e-5*0.5*M_PI/vtotal;
-    for(int p=0; p<nparticles; ++p){
-        // std::cout << "tracing particle " << p << "\n";
-        trace_particle(particles[p], srange_arr, trange_arr, zrange_arr, quadpts_arr, dt, tmax, m, q, psi0);
-    }
+    // for(int p=0; p<nparticles; ++p){
+    //     // std::cout << "tracing particle " << p << "\n";
+    //     trace_particle(particles[p], srange_arr, trange_arr, zrange_arr, quadpts_arr, dt, tmax, m, q, psi0);
+    // }
 
     
-    // particle_t* particles_d;
-    // cudaMalloc((void**)&particles_d, nparticles * sizeof(particle_t));
-    // cudaMemcpy(particles_d, particles, nparticles * sizeof(particle_t), cudaMemcpyHostToDevice);
+    particle_t* particles_d;
+    cudaMalloc((void**)&particles_d, nparticles * sizeof(particle_t));
+    cudaMemcpy(particles_d, particles, nparticles * sizeof(particle_t), cudaMemcpyHostToDevice);
 
-    // double* srange_d;
-    // cudaMalloc((void**)&srange_d, 3 * sizeof(double));
-    // cudaMemcpy(srange_d, srange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
+    double* srange_d;
+    cudaMalloc((void**)&srange_d, 3 * sizeof(double));
+    cudaMemcpy(srange_d, srange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
 
-    // double* zrange_d;
-    // cudaMalloc((void**)&zrange_d, 3 * sizeof(double));
-    // cudaMemcpy(zrange_d, zrange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
+    double* zrange_d;
+    cudaMalloc((void**)&zrange_d, 3 * sizeof(double));
+    cudaMemcpy(zrange_d, zrange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
 
-    // double* trange_d;
-    // cudaMalloc((void**)&trange_d, 3 * sizeof(double));
-    // cudaMemcpy(trange_d, trange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
+    double* trange_d;
+    cudaMalloc((void**)&trange_d, 3 * sizeof(double));
+    cudaMemcpy(trange_d, trange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
 
 
-    // double* quadpts_d;
-    // cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(double));
-    // cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(double), cudaMemcpyHostToDevice);
+    double* quadpts_d;
+    cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(double));
+    cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(double), cudaMemcpyHostToDevice);
 
-    // // double* workspaces_d;
-    // // cudaMalloc((void**)&workspaces_d, nparticles*workspace_size * sizeof(double));
+    int nthreads = 256;
+    int nblks = nparticles / nthreads + 1;
+    particle_trace_kernel<<<nblks, nthreads>>>(particles_d, srange_d, zrange_d, trange_d, quadpts_d, dt, tmax, m, q, psi0, nparticles);
 
-    // int nthreads = 1;
-    // int nblks = nparticles / nthreads + 1;
-    // particle_trace_kernel<<<nblks, nthreads>>>(particles_d, srange_d, zrange_d, trange_d, quadpts_d, dt, tmax, m, q, nparticles);
-
-    // cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost);
+    cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost);
 
     
     vector<bool> particle_loss(nparticles);
