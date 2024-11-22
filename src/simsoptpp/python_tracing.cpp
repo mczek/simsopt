@@ -12,7 +12,7 @@ using std::vector;
 #include <Eigen/Core>
 
 
-extern "C" vector<bool> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
+extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
         py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
         double tmax, double tol, double psi0, int nparticles);
 

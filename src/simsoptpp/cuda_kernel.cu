@@ -32,22 +32,23 @@ typedef struct particle_t {
     double dotz;
     double dotv_par;
     bool has_left;
+    double t;
 } particle_t;
 
-typedef struct workspace_t {
-    double r_shape[4];
-    double phi_shape[4];
-    double z_shape[4];
+// typedef struct workspace_t {
+//     double r_shape[4];
+//     double phi_shape[4];
+//     double z_shape[4];
 
-    double r_dshape[4];
-    double phi_dshape[4];
-    double z_dshape[4];
+//     double r_dshape[4];
+//     double phi_dshape[4];
+//     double z_dshape[4];
 
-    double B[3];
-    double grad_B[9];
-    double nabla_normB[3];
-    double cross_prod[3];
-} workspace_t;
+//     double B[3];
+//     double grad_B[9];
+//     double nabla_normB[3];
+//     double cross_prod[3];
+// } workspace_t;
 
 __global__ void addKernel(int *c, const int* a, const int* b, int size){
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
@@ -397,6 +398,7 @@ __host__ __device__  void trace_particle(particle_t& p, double* srange_arr, doub
             p.has_left = true;
             return;
         }
+        p.t = t;
 
         counter++;
 
@@ -412,7 +414,7 @@ __global__ void particle_trace_kernel(particle_t* particles, double* rrange_arr,
     }
 }
 
-extern "C" vector<bool> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
+extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
         py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
         double tmax, double tol, double psi0, int nparticles){
 
@@ -472,6 +474,7 @@ extern "C" vector<bool> gpu_tracing(py::array_t<double> quad_pts, py::array_t<do
         particles[i].v_par = vtang_arr[i];
         particles[i].v_perp = sqrt(vtotal*vtotal -  particles[i].v_par* particles[i].v_par);
         particles[i].has_left = false;
+        particles[i].t = 0;
         
     }
 
@@ -512,9 +515,9 @@ extern "C" vector<bool> gpu_tracing(py::array_t<double> quad_pts, py::array_t<do
     cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost);
 
     
-    vector<bool> particle_loss(nparticles);
+    vector<double> particle_loss(nparticles);
     for(int i=0; i<nparticles; ++i){
-        particle_loss[i] = particles[i].has_left;
+        particle_loss[i] = particles[i].t;
     }
 
     // delete[] workspaces;
