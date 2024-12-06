@@ -35,21 +35,6 @@ typedef struct particle_t {
     double t;
 } particle_t;
 
-// typedef struct workspace_t {
-//     double r_shape[4];
-//     double phi_shape[4];
-//     double z_shape[4];
-
-//     double r_dshape[4];
-//     double phi_dshape[4];
-//     double z_dshape[4];
-
-//     double B[3];
-//     double grad_B[9];
-//     double nabla_normB[3];
-//     double cross_prod[3];
-// } workspace_t;
-
 __global__ void addKernel(int *c, const int* a, const int* b, int size){
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
     if(idx < size){
@@ -84,6 +69,8 @@ extern "C" void addKernelWrapper(int *c, const int *a, const int *b, int size){
 
 
 
+
+
 __host__ __device__ void shape(double x, double* shape){
     shape[0] = (1.0-x)*(2.0-x)*(3.0-x)/6.0;
     shape[1] = x*(2.0-x)*(3.0-x)/2.0;
@@ -92,33 +79,18 @@ __host__ __device__ void shape(double x, double* shape){
     return;         
 }
 
-__host__ __device__ void dshape(double x, double h, double* dshape){
-    dshape[0] = (-(2.0-x)*(3.0-x)-(1.0-x)*(3.0-x)-(1.0-x)*(2.0-x))/(h*6.0);
-    dshape[1] = ( (2.0-x)*(3.0-x)-x*(3.0-x)-x*(2.0-x))/(h*2.0);
-    dshape[2] = ( (x-1.0)*(3.0-x)+x*(3.0-x)-x*(x-1.0))/(h*2.0);
-    dshape[3] = ( (x-1.0)*(x-2.0)+x*(x-2.0)+x*(x-1.0))/(h*6.0);
-    return;         
-}
+// __host__ __device__ void dshape(double x, double h, double* dshape){
+//     dshape[0] = (-(2.0-x)*(3.0-x)-(1.0-x)*(3.0-x)-(1.0-x)*(2.0-x))/(h*6.0);
+//     dshape[1] = ( (2.0-x)*(3.0-x)-x*(3.0-x)-x*(2.0-x))/(h*2.0);
+//     dshape[2] = ( (x-1.0)*(3.0-x)+x*(3.0-x)-x*(x-1.0))/(h*2.0);
+//     dshape[3] = ( (x-1.0)*(x-2.0)+x*(x-2.0)+x*(x-1.0))/(h*6.0);
+//     return;         
+// }
 
-// out contains derivatives for x , y, z, v_par, and then norm of B and surface distance interpolation
-__host__ __device__ void calc_derivs(double* state, double* out, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr, double m, double q, double mu, double psi0){
-    /*
-    * Returns     
-    out[0] = ds/dtime
-    out[1] = dtheta/dtime
-    out[2] = dzeta/dtime
-
-    out[3] = dvpar/dtime;
-    out[4] = modB;
-    
-
-    */
-
+__host__ __device__ __forceinline__ void interpolate(double* loc, double* data, double* out, double* srange_arr, double* trange_arr, double* zrange_arr, int n){
     int ns = srange_arr[2];
     int nt = trange_arr[2];
     int nz = zrange_arr[2];
-
-    // std::cout << "calling derivs with mu=\t" << mu << "\n";
 
     // Need to interpolate modB, modB derivs, G, and iota
 
@@ -130,26 +102,32 @@ __host__ __device__ void calc_derivs(double* state, double* out, double* srange_
     /*
     * index into the grid and calculate weights
     */ 
-    double s_grid_size = srange_arr[1] / (srange_arr[2]-1);
-    double theta_grid_size = 2*M_PI / trange_arr[2];
-    double zeta_grid_size = 2*M_PI / zrange_arr[2];
+    double s_grid_size = (srange_arr[1]-srange_arr[0]) / (srange_arr[2]-1);
+    double theta_grid_size = (trange_arr[1]-trange_arr[0]) / (trange_arr[2]-1);
+    double zeta_grid_size = (zrange_arr[1]-zrange_arr[0]) / (zrange_arr[2]-1);
+
+    // fmt::print("s grid values:\n");
+    // for(int ii=0; ii<ns; ++ii){
+    //     fmt::print("{} {}\n", ii, ii*s_grid_size);
+    // }
     
+    // fmt::print("t grid values:\n");
+    // for(int ii=0; ii<nt; ++ii){
+    //     fmt::print("{} {}\n", ii, ii*theta_grid_size);
+    // }
 
+    // fmt::print("z grid values:\n");
+    // for(int ii=0; ii<nz; ++ii){
+    //     fmt::print("{} {}\n", ii, ii*zeta_grid_size);
+    // }
     // Get Boozer coordinates of current position
-    double s = sqrt(state[0]*state[0] + state[1]*state[1]);
-    double theta = atan2(state[1], state[0]);
-    double zeta = state[2];
-    double v_par = state[3];
-
-    // map theta and zeta to [0, 2pi]
-    theta = fmod(theta, 2*M_PI);
-    theta += (2*M_PI)*(theta < 0);
-
-    zeta = fmod(zeta, 2*M_PI);
-    zeta += (2*M_PI)*(zeta < 0);
+    double s = loc[0];
+    double t = loc[1];
+    double z = loc[2];
 
 
-    // std::cout << "s,t,z=" << s << "\t" << theta << "\t" << zeta << std::endl;
+
+    // fmt::print("s,t,z={} {} {}\n", s, t, z);
 
     
 
@@ -158,11 +136,21 @@ __host__ __device__ void calc_derivs(double* state, double* out, double* srange_
     // get correct "meta grid" for continuity
     // keeping stz order
 
+    // starting change
+
+    // int i = (int) s / s_grid_size;
+    // int j = (int) t / theta_grid_size;
+    // int k = (int) z / zeta_grid_size;
 
 
-    int i = 3*((int) (s / s_grid_size) / 3);
-    int j = 3*((int) (theta / theta_grid_size) / 3);
-    int k = 3*((int) (zeta / zeta_grid_size) / 3);
+    int i = 3*((int) ((s - srange_arr[0]) / s_grid_size) / 3);
+    int j = 3*((int) ((t - trange_arr[0]) / theta_grid_size) / 3);
+    int k = 3*((int) ((z - zrange_arr[0]) / zeta_grid_size) / 3);
+
+
+    i = min(i, (int)srange_arr[2]-4);
+    j = min(j, (int)trange_arr[2]-4);
+    k = min(k, (int)zrange_arr[2]-4);
 
     // std::cout << "i,j,k=" << i << "\t" << j << "\t" << k << std::endl;
 
@@ -170,7 +158,7 @@ __host__ __device__ void calc_derivs(double* state, double* out, double* srange_
     // if(i >= ns){
     //     std::cout << "s=" << s << std::endl;
     // }
-    i = min(ns-1, i);
+    // i = min(ns-1, i);
 
 
     // std::cout << "i,j,k=" << i << "\t" << j << "\t" << k << "\n";
@@ -178,9 +166,11 @@ __host__ __device__ void calc_derivs(double* state, double* out, double* srange_
     // normalized positions in local grid wrt e.g. r at index i
     // maps the position to [0,3] in the "meta grid"
 
-    double s_rel = (s -  i*s_grid_size) / s_grid_size;
-    double theta_rel = (theta -  j*theta_grid_size) / theta_grid_size;
-    double zeta_rel = (zeta - k*zeta_grid_size) / zeta_grid_size;
+    double s_rel = (s -  i*s_grid_size - srange_arr[0]) / s_grid_size;
+    double theta_rel = (t -  j*theta_grid_size - trange_arr[0]) / theta_grid_size;
+    double zeta_rel = (z - k*zeta_grid_size - zrange_arr[0]) / zeta_grid_size;
+
+    // fmt::print("s_rel,t_rel,z_rel={} {} {}\n", s_rel, theta_rel, zeta_rel);
     // std::cout << "s_rel,theta_rel,zeta_rel=" << s_rel << "\t" << theta_rel << "\t" << zeta_rel << std::endl;
 
     // fill shape vectors
@@ -202,7 +192,7 @@ __host__ __device__ void calc_derivs(double* state, double* out, double* srange_
 
     // store interpolants in a common array, indexed the same as the columns of the quad info
     // modB, derivs of modB, G, iota
-    double interpolants[6] = {0};
+    // double interpolants[6] = {0};
 
     // std::cout << "interpolating" << std::endl;
 
@@ -216,10 +206,10 @@ __host__ __device__ void calc_derivs(double* state, double* out, double* srange_
                     int row_idx = (i+ii)*nt*nz + wrap_j*nz + wrap_k;
                     
                     double shape_val = s_shape[ii]*t_shape[jj]*z_shape[kk];
-                    // std::cout << "modB interpolant: " << quadpts_arr[6*row_idx] << std::endl;
-                    for(int zz=0; zz<6; ++zz){
+                    // std::cout << row_idx << " modB interpolant: " << data[n*row_idx] << std::endl;
+                    for(int zz=0; zz<n; ++zz){
                         // // std::cout << "accessing elt " << 6*row_idx + zz << "\n";
-                        interpolants[zz] += quadpts_arr[6*row_idx + zz]*shape_val;
+                        out[zz] += data[n*row_idx + zz]*shape_val;
                         // if(zz == 0){
                         //     // std::cout << quadpts_arr[6*row_idx + zz] << "\n";
                         // }
@@ -233,11 +223,57 @@ __host__ __device__ void calc_derivs(double* state, double* out, double* srange_
 
     }
 
-    // for(int ii=0; ii<6; ++ii){
-    //     std::cout << interpolants[ii] << "\n";
+    // for(int ii=0; ii<n; ++ii){
+    //     fmt::print("{}\t", out[ii]);
     // }
+    // std::cout << "\n";
+
+}
+
+// out contains derivatives for x , y, z, v_par, and then norm of B and surface distance interpolation
+__host__  __device__ void calc_derivs(double* state, double* out, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr, double m, double q, double mu, double psi0){
+    /*
+    * Returns     
+    out[0] = ds/dtime
+    out[1] = dtheta/dtime
+    out[2] = dzeta/dtime
+
+    out[3] = dvpar/dtime;
+    out[4] = modB;
     
 
+    */
+
+    double interpolants[6] = {0};
+    double loc[3];
+
+    double s = sqrt(state[0]*state[0] + state[1]*state[1]);
+    double theta = atan2(state[1], state[0]);
+    double z = state[2];
+    double v_par = state[3];
+
+
+    // exploit potential symmetry
+    
+    // we want to exploit periodicity in the B-field, but leave sine(theta) unchanged
+    double t = fmod(theta, trange_arr[1]);
+    t += trange_arr[1]*(t < 0);
+
+    // we can modify z because it's only used to access the B-field location
+    z = fmod(z, zrange_arr[1]);
+    z += zrange_arr[1]*(z < 0);
+
+    loc[0] = s;
+    loc[1] = t;
+    loc[2] = z;
+
+
+    interpolate(loc, quadpts_arr, interpolants, srange_arr, trange_arr, zrange_arr, 6);
+
+    // for(int ii=0; ii<6; ++ii){
+    //     fmt::print("{}\t", interpolants[ii]);
+    // }
+    // std::cout << "\n";
 
     double fak1 = m*v_par*v_par/interpolants[0] + m*mu;
     double sdot = -interpolants[2]*fak1 / (q*psi0);
@@ -256,7 +292,7 @@ __host__ __device__ void calc_derivs(double* state, double* out, double* srange_
 }
 
 
-__host__ __device__  void trace_particle(particle_t& p, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr,
+__host__ __device__   void trace_particle(particle_t& p, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr,
                         double dt, double tmax, double m, double q, double psi0){
 
     double mu;
@@ -368,8 +404,8 @@ __host__ __device__  void trace_particle(particle_t& p, double* srange_arr, doub
 
         // // std::cout << "intermediate val=" << 0.9*pow(err, -1.0/5.0) << "\n";
         double dt_new = dt*0.9*pow(err, -1.0/5.0);
-        dt_new = max(dt_new, 0.2 * dt);  // Limit step size reduction
-        dt_new = min(dt_new, 5.0 * dt);  // Limit step size increase
+        dt_new = fmax(dt_new, 0.2 * dt);  // Limit step size reduction
+        dt_new = fmin(dt_new, 5.0 * dt);  // Limit step size increase
         if ((0.5 < err) & (err < 1.0)){
             dt_new = dt;
         }
@@ -379,13 +415,13 @@ __host__ __device__  void trace_particle(particle_t& p, double* srange_arr, doub
             // // std::cout << "point accepted\n";
             // Accept the step
             t += dt;
-            dt = min(dt_new, tmax - t);
+            dt = fmin(dt_new, tmax - t);
 
             p.y1 = x_new[0];
             p.y2 = x_new[1];
             p.z = x_new[2];
-            p.z = fmod(p.z, 2*M_PI);
-            p.z += (2*M_PI)*(p.z < 0);
+            p.z = fmod(p.z, zrange_arr[1]);
+            p.z += zrange_arr[1]*(p.z < 0);
             p.v_par = x_new[3];
         } else {
             // Reject the step and try again with smaller dt
@@ -414,6 +450,33 @@ __global__ void particle_trace_kernel(particle_t* particles, double* rrange_arr,
     }
 }
 
+extern "C" py::array_t<double> test_interpolation(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, int n){
+    py::buffer_info quadpts_buf = quad_pts.request();
+    double* quadpts_arr = static_cast<double*>(quadpts_buf.ptr);
+
+    py::buffer_info s_buf = srange.request();
+    double* srange_arr = static_cast<double*>(s_buf.ptr);
+
+    py::buffer_info t_buf = trange.request();
+    double* trange_arr = static_cast<double*>(t_buf.ptr);
+
+    py::buffer_info z_buf = zrange.request();
+    double* zrange_arr = static_cast<double*>(z_buf.ptr);
+
+    py::buffer_info loc_buf = loc.request();
+    double* loc_arr = static_cast<double*>(loc_buf.ptr);
+
+    double out[n];
+    interpolate(loc_arr, quadpts_arr, out, srange_arr, trange_arr, zrange_arr, n);
+
+    auto result = py::array_t<double>(n, out);
+    return result;
+
+
+
+
+}
+
 extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
         py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
         double tmax, double tol, double psi0, int nparticles){
@@ -435,7 +498,7 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
     py::buffer_info vtang_buf = vtang.request();
     double* vtang_arr = static_cast<double*>(vtang_buf.ptr);
 
-    // contsins b field and then curve distance
+    // contains b field
     py::buffer_info quadpts_buf = quad_pts.request();
     double* quadpts_arr = static_cast<double*>(quadpts_buf.ptr);
 
@@ -482,7 +545,7 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
 
     double dt = 1e-5*0.5*M_PI/vtotal;
     // for(int p=0; p<nparticles; ++p){
-    //     // std::cout << "tracing particle " << p << "\n";
+    //     std::cout << "tracing particle " << p << "\n";
     //     trace_particle(particles[p], srange_arr, trange_arr, zrange_arr, quadpts_arr, dt, tmax, m, q, psi0);
     // }
 
@@ -520,7 +583,6 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
         particle_loss[i] = particles[i].t;
     }
 
-    // delete[] workspaces;
     delete[] particles;
 
     return particle_loss;

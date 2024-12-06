@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import math
 import time
 from math import sqrt
+from booz_xform import Booz_xform
 
 from simsopt.field import (BoozerRadialInterpolant, InterpolatedBoozerField, trace_particles_boozer,
                            MinToroidalFluxStoppingCriterion, MaxToroidalFluxStoppingCriterion,
@@ -18,6 +19,9 @@ from simsopt.util.constants import PROTON_MASS, ELEMENTARY_CHARGE, ONE_EV
 
 filename = os.path.join('/global/homes/m/mczek/simsopt/examples/2_Intermediate/inputs/input.LandremanPaul2021_QH')
 # filename = '/global/homes/m/mczek/simsopt/input.misha'
+# filename = '/global/homes/m/mczek/simsopt/boozmn_wout_QA_bootstrap.nc'
+
+
 print(filename)
 logging.basicConfig()
 logger = logging.getLogger('simsopt.field.tracing')
@@ -95,6 +99,7 @@ vmec = Vmec(filename)
 order = 3
 bri = BoozerRadialInterpolant(vmec, order, enforce_vacuum=True)
 
+
 # Construct 3D interpolation
 
 nfp = vmec.wout.nfp
@@ -103,6 +108,14 @@ srange = (0, 1, 15)
 thetarange = (0, np.pi, 15)
 zetarange = (0, 2*np.pi/nfp, 15)
 field = InterpolatedBoozerField(bri, degree, srange, thetarange, zetarange, True, nfp=nfp, stellsym=True)
+
+simsopt_s_grid = np.linspace(srange[0], srange[1], srange[2]+1)
+simsopt_t_grid = np.linspace(thetarange[0], thetarange[1], thetarange[2]+1)
+simsopt_z_grid = np.linspace(zetarange[0], zetarange[1], zetarange[2]+1)
+
+print("simsopt_s_grid", simsopt_s_grid)
+print("simsopt_t_grid", simsopt_t_grid)
+print("simsopt_z_grid", simsopt_z_grid)
 
 # Evaluate error in interpolation
 
@@ -130,13 +143,16 @@ print("calculating J max")
 n_grid_pts = 15
 s_max = 1
 
-srange = (0, s_max, n_grid_pts)
-trange = (0, 2*np.pi, 3*n_grid_pts)
-zrange = (0, 2*np.pi, 3*n_grid_pts)
+srange = (0, s_max, 3*n_grid_pts+1)
+trange = (0, 2*np.pi, 3*2*n_grid_pts+1)
+zrange = (0, 2*np.pi/nfp, 3*n_grid_pts+1)
 
 s_grid = np.linspace(srange[0], srange[1], srange[2])
-theta_grid = np.linspace(trange[0], trange[1], trange[2], endpoint=False)
-zeta_grid = np.linspace(zrange[0], zrange[1], zrange[2], endpoint=False)
+theta_grid = np.linspace(trange[0], trange[1], trange[2])
+zeta_grid = np.linspace(zrange[0], zrange[1], zrange[2])
+
+print("theta_grid", theta_grid)
+print("zeta_grid", zeta_grid)
 
 
 print("building quad_pts")
@@ -173,19 +189,60 @@ print("interpolation time = ", interp_end-interp_start)
 quad_info = np.hstack((modB, modB_derivs, G, iota))
 quad_info = np.ascontiguousarray(quad_info)
 
+# for i in range(quad_info.shape[0]):
+# 	print(quad_pts[i,:])
+# 	print(quad_info[i,:])
 # set seed
 np.random.seed(8)
 
 
 # TRACE NAIVE PARTICLES
 t3 = time.time()
-nparticles = 5000
+nparticles = 100
 filename = "boozer_tracing_loss_time.csv"
+
 
 stz_inits = np.vstack([sample_stz(field, maxJ) for i in range(nparticles)])
 vpar_inits = vpar * np.random.uniform(low=-1, high=1, size=nparticles)
 
 print("tracing particles")
+
+field.set_points(stz_inits)
+G = field.G()
+iota = field.iota()
+modB = field.modB()
+
+# Quantities to interpolate
+print("interpolation points")
+modB_derivs = field.modB_derivs()
+test_quad_info = np.hstack((modB, modB_derivs, G, iota))
+
+# y1 = stz_inits[:, 0] * np.cos(stz_inits[:, 1])
+# y2 = stz_inits[:, 0] * np.sin(stz_inits[:, 1])
+
+# s = np.sqrt(y1*y1 + y2*y2)
+# t = np.arctan2(y2, y1) 
+# new_stz_inits = stz_inits.copy()
+# new_stz_inits[:, 0] = s
+# new_stz_inits[:, 1] = t
+
+# field.set_points(new_stz_inits)
+# G = field.G()
+# iota = field.iota()
+# modB = field.modB()
+
+# # Quantities to interpolate
+# print("interpolation points")
+# modB_derivs = field.modB_derivs()
+# test_quad_info = np.hstack((modB, modB_derivs, G, iota))
+
+with np.printoptions(threshold=np.inf):
+	print(stz_inits)
+	# print(s)
+	# print(t)
+	print(test_quad_info)
+
+print("row 465 ", quad_info[465, :])
 
 
 last_time = sopp.gpu_tracing(
@@ -198,7 +255,7 @@ last_time = sopp.gpu_tracing(
 	q=ELEMENTARY_CHARGE, 
 	vtotal=sqrt(2*Ekin/mass),  
 	vtang=vpar_inits, 
-	tmax=1e-1, 
+	tmax=1e-2, 
 	tol=1e-9, 
 	psi0=psi0, 
 	nparticles=nparticles)
@@ -206,7 +263,7 @@ last_time = sopp.gpu_tracing(
 
 
 t4 = time.time()
-
+print(last_time)
 did_leave = [t < 1e-2 for t in last_time]
 loss_frac = sum(did_leave) / len(did_leave)
 print(f"Number of particles= {nparticles}")
@@ -219,8 +276,8 @@ print(f"gpu_tracing function time for particle tracing={t4-t3:.3f}s.")
 
 
 
-df = pd.DataFrame(stz_inits)
-df.columns = ["s", "theta", "zeta"]
-df['v_par'] = vpar_inits
-df['last_time'] = last_time
-df.to_csv(filename, header='column_names')
+# df = pd.DataFrame(stz_inits)
+# df.columns = ["s", "theta", "zeta"]
+# df['v_par'] = vpar_inits
+# df['last_time'] = last_time
+# df.to_csv(filename, header='column_names')

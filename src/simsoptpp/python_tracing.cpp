@@ -16,6 +16,8 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
         py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
         double tmax, double tol, double psi0, int nparticles);
 
+extern "C" py::array_t<double> test_interpolation(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, int n);
+
 void init_tracing(py::module_ &m){
 
 
@@ -82,6 +84,15 @@ void init_tracing(py::module_ &m){
         py::arg("tol"),
         py::arg("psi0"),
         py::arg("nparticles")
+        );
+
+        m.def("test_interpolation", &test_interpolation,
+        py::arg("quad_pts"),
+        py::arg("srange"),
+        py::arg("trange"),
+        py::arg("zrange"),
+        py::arg("loc"),
+        py::arg("n")
         );
 
     m.def("particle_fullorbit_tracing", &particle_fullorbit_tracing<xt::pytensor>,

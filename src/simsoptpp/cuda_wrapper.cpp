@@ -25,6 +25,9 @@ extern "C" void addKernelWrapper(int *c, const int *a, const int *b, int size);
 extern "C" vector<bool> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
         py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
         double tmax, double tol, double psi0,  int nparticles);
+
+extern "C" py::array_t<double> test_interpolation(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, int n);
+
 // PYBIND11_MODULE(cuda_module, m) {
 //     m.def("add_kernel", [](py::array_t<int> a, py::array_t<int> b){
 //         auto a_buf = a.request(), b_buf = b.request();
