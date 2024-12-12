@@ -122,15 +122,22 @@ class GuidingCenterVacuumBoozerRHS {
             double v_perp2 = 2*mu*modB;
             double fak1 = m*v_par*v_par/modB + m*mu;
 
+            // fmt::print("simsopt modB ={}, modB derivs={} {} {}, G={}, iota={}\n", modB, dmodBds, dmodBdtheta, dmodBdzeta, G, iota);
+            // fmt::print("simsopt m={}, v_par={}, mu={}\n", m, v_par, mu); 
+
+
+
             dydt[0] = -dmodBdtheta*fak1/(q*psi0);
             dydt[1] = dmodBds*fak1/(q*psi0) + iota*v_par*modB/G;
             dydt[2] = v_par*modB/G;
             dydt[3] = -(iota*dmodBdtheta + dmodBdzeta)*mu*modB/G;
 
-            std::cout << "evaluating derivative" << std::endl;
-            if(ys[0] >= 1){
-                std::cout << "s=" << ys[0] << " G = " << G << "dydt[1]= " << dydt[1] << std::endl;
-            }
+
+            // fmt::print("fak1={}, sdot={}, tdot={}\n", fak1, dydt[0], dydt[1]);
+            // std::cout << "evaluating derivative" << std::endl;
+            // if(ys[0] >= 1){
+            //     std::cout << "s=" << ys[0] << " G = " << G << "dydt[1]= " << dydt[1] << std::endl;
+            // }
         }
 };
 
@@ -533,6 +540,62 @@ particle_guiding_center_boozer_tracing(
       return solve(rhs_class, y, tmax, dt, dtmax, tol, zetas, stopping_criteria, true);
     }
 }
+
+
+// compute derivative for a single point
+void particle_guiding_center_boozer_derivs(
+        shared_ptr<BoozerMagneticField<xt::pytensor>> field, array<double, 3> stz_init, array<double, 4>&  out,
+        double m, double q, double vtotal, double vtang)
+{
+    typename BoozerMagneticField<xt::pytensor>::Tensor2 stz({{stz_init[0], stz_init[1], stz_init[2]}});
+    field->set_points(stz);
+    double modB = field->modB()(0);
+    double vperp2 = vtotal*vtotal - vtang*vtang;
+    double mu = vperp2/(2*modB);
+
+    array<double, 4> y = {stz_init[0], stz_init[1], stz_init[2], vtang};
+    auto rhs_class = GuidingCenterVacuumBoozerRHS<xt::pytensor>(field, m, q, mu);
+
+    rhs_class(y, out, 0.0);
+
+}
+
+
+py::array_t<double> simsopt_derivs(shared_ptr<BoozerMagneticField<xt::pytensor>> field, py::array_t<double> loc, double m, double q, double vtotal, double vtang){
+
+
+    py::buffer_info loc_buf = loc.request();
+    double* loc_arr = static_cast<double*>(loc_buf.ptr);
+
+    double out[4];
+    array<double, 3> stz = {loc_arr[0], loc_arr[1], loc_arr[2]};
+
+    array<double, 4> derivs;
+    particle_guiding_center_boozer_derivs(field, stz, derivs, m, q, vtotal, vtang);
+
+    for(int i=0; i<4; ++i){
+        out[i] = derivs[i];
+    }
+
+    double s = loc_arr[0];
+    double theta = loc_arr[1];
+    
+    // map to "pseudo-Cartesian coordinates"
+    double dy1dt = out[0]*cos(theta) - s * sin(theta) * out[1];
+    double dy2dt = out[0]*sin(theta) + s * cos(theta) * out[1];
+
+    out[0] = dy1dt;
+    out[1] = dy2dt;
+
+
+    auto result = py::array_t<double>(4, out);
+
+
+
+    return result;
+
+}
+
 
 template
 tuple<vector<array<double, 5>>, vector<array<double, 6>>> particle_guiding_center_boozer_tracing<xt::pytensor>(

@@ -28,6 +28,7 @@ extern "C" vector<bool> gpu_tracing(py::array_t<double> quad_pts, py::array_t<do
 
 extern "C" py::array_t<double> test_interpolation(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, int n);
 
+extern "C" py::array_t<double> test_derivatives(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, double m, double q, double mu, double psi0);
 // PYBIND11_MODULE(cuda_module, m) {
 //     m.def("add_kernel", [](py::array_t<int> a, py::array_t<int> b){
 //         auto a_buf = a.request(), b_buf = b.request();

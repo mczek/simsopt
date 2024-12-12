@@ -75,7 +75,7 @@ def subtest_regular_grid_interpolant_exact(dim, degree):
         Build a random, vector valued polynomial of a specific degree and check
         that it is interpolated exactly.
         """
-        np.random.seed(0)
+        np.random.seed(1800)
         xran = (1.0, 4.0, 10)
         yran = (1.1, 3.9, 10)
         zran = (1.2, 3.8, 10)
@@ -107,12 +107,13 @@ def subtest_regular_grid_interpolant_exact(dim, degree):
 
         # print("error", fxyz - fhxyz_mine)
         # assert np.allclose(fxyz, fhxyz_mine, atol=1e-12, rtol=1e-12)
-        print(np.max(np.abs((fxyz-fhxyz_mine))))
+        print("Polynomial interpolation difference on {} points: {}".format(nsamples, np.max(np.abs((fhxyz-fhxyz_mine)))))
+        # print(np.max(np.abs((fxyz-fhxyz_mine))))
 
         # assert np.allclose(fxyz, fhxyz, atol=1e-12, rtol=1e-12)
-        print(np.max(np.abs((fxyz-fhxyz))))
+        # print(np.max(np.abs((fxyz-fhxyz))))
 
-        print(np.max(np.abs((fhxyz-fhxyz_mine))))
+        # print()
 
 
 def test_interpolant_bfield(n_metagrid_pts):
@@ -133,9 +134,11 @@ def test_interpolant_bfield(n_metagrid_pts):
 
     # generate test points
     n_test_pts = 10000
+    np.random.seed(1800)
+
     s = np.random.uniform(low=0, high=1, size=(n_test_pts,1))
-    t = np.random.uniform(low=0, high=np.pi, size=(n_test_pts,1))
-    z = np.random.uniform(low=0, high=2*np.pi/nfp, size=(n_test_pts,1))
+    t = np.random.uniform(low=0, high=2*np.pi, size=(n_test_pts,1))
+    z = np.random.uniform(low=0, high=2*np.pi, size=(n_test_pts,1))
     stz = np.hstack((s,t,z))
 
 
@@ -147,6 +150,7 @@ def test_interpolant_bfield(n_metagrid_pts):
     modB = field.modB()
     modB_derivs = field.modB_derivs()
     simsopt_interpolation = np.hstack((modB, modB_derivs, G, iota))
+
 
     ### NEW INTERPOLANT
     srange = (0, 1, 3*n_metagrid_pts+1)
@@ -178,12 +182,25 @@ def test_interpolant_bfield(n_metagrid_pts):
     new_interpolation = np.zeros((stz.shape[0], 6))
     for i in range(stz.shape[0]):
         loc = stz[i,:]
+        # while loc[2] > 2*np.pi/nfp:
+        #     loc[2] -= 2*np.pi/nfp
+        # symm_exploited = False
+        # if loc[1] > np.pi:
+        #     period = 2*np.pi / nfp
+        #     loc[2] = period - loc[2]
+        #     loc[1] = 2*np.pi - loc[1]
         interpolated_values = sopp.test_interpolation(quad_info, srange, trange, zrange, loc, 6)
+
+        # if symm_exploited:
+        #     interpolated_values[2] *= -1
+        #     interpolated_values[3] *= -1
         # print(interpolated_values)
         new_interpolation[i,:] = interpolated_values
 
-    diff =np.max(np.abs(simsopt_interpolation - new_interpolation))
+    print(np.abs(simsopt_interpolation - new_interpolation) / simsopt_interpolation)
+    diff =np.max(np.abs(simsopt_interpolation - new_interpolation) / simsopt_interpolation)
     print("Maximum difference in interpolation values on {} points: {}".format(n_test_pts, diff))
+
 
 
 # subtest_regular_grid_interpolant_exact(3, 3)

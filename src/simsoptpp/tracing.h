@@ -5,9 +5,15 @@
 #include "boozermagneticfield.h"
 #include "regular_grid_interpolant_3d.h"
 
+#include "xtensor-python/pytensor.hpp"     // Numpy bindings
+#include "xtensor-python/pyarray.hpp"     // Numpy bindings
+
+
+
 using std::shared_ptr;
 using std::vector;
 using std::tuple;
+namespace py = pybind11;
 
 double get_phi(double x, double y, double phi_near);
 
@@ -163,3 +169,6 @@ tuple<vector<array<double, 4>>, vector<array<double, 5>>>
 fieldline_tracing(
         shared_ptr<MagneticField<T>> field, array<double, 3> xyz_init,
         double tmax, double tol, vector<double> phis, vector<shared_ptr<StoppingCriterion>> stopping_criteria);
+
+
+py::array_t<double> simsopt_derivs(shared_ptr<BoozerMagneticField<xt::pytensor>> field, py::array_t<double> loc, double m, double q, double vtotal, double vtang);

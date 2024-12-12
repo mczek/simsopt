@@ -17,6 +17,7 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
         double tmax, double tol, double psi0, int nparticles);
 
 extern "C" py::array_t<double> test_interpolation(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, int n);
+extern "C" py::array_t<double> test_derivatives(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, double v_par, double v_total, double m, double q, double psi0);
 
 void init_tracing(py::module_ &m){
 
@@ -70,7 +71,7 @@ void init_tracing(py::module_ &m){
         py::arg("stopping_criteria")=vector<shared_ptr<StoppingCriterion>>{}
         );
 
-        m.def("gpu_tracing", &gpu_tracing,
+    m.def("gpu_tracing", &gpu_tracing,
         py::arg("quad_pts"),
         py::arg("srange"),
         py::arg("trange"),
@@ -86,13 +87,37 @@ void init_tracing(py::module_ &m){
         py::arg("nparticles")
         );
 
-        m.def("test_interpolation", &test_interpolation,
+    m.def("test_interpolation", &test_interpolation,
         py::arg("quad_pts"),
         py::arg("srange"),
         py::arg("trange"),
         py::arg("zrange"),
         py::arg("loc"),
         py::arg("n")
+        );
+
+    m.def("test_derivatives", &test_derivatives,
+        py::arg("quad_pts"),
+        py::arg("srange"),
+        py::arg("trange"),
+        py::arg("zrange"),
+        py::arg("loc"),
+        py::arg("v_par"),
+        py::arg("v_total"),
+        py::arg("m"),
+        py::arg("q"),
+        py::arg("psi0")
+        );
+
+
+
+    m.def("simsopt_derivs", &simsopt_derivs,
+        py::arg("field"),
+        py::arg("loc"),
+        py::arg("m"),
+        py::arg("q"),
+        py::arg("vtotal"),
+        py::arg("vtang")
         );
 
     m.def("particle_fullorbit_tracing", &particle_fullorbit_tracing<xt::pytensor>,
