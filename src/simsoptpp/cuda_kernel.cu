@@ -415,13 +415,14 @@ __host__ __device__   void trace_particle(particle_t& p, double* srange_arr, dou
         
         // Compute  error
         // https://live.boost.org/doc/libs/1_82_0/libs/numeric/odeint/doc/html/boost_numeric_odeint/odeint_in_detail/steppers.html
+        // resolve typo in boost docs: https://numerical.recipes/book.html
         double tol=1e-9;
         // // std::cout << "error elts \n";
         double err = 0.0;
         bool accept = true;
         for (int i = 0; i < 4; i++) {
             x_err[i] = dt*(bhat1 * derivs[i] + bhat3 * k3[i] + bhat4 * k4[i] + bhat5 * k5[i] + bhat6 * k6[i] + bhat7 * k7[i]);
-            x_err[i] = fabs(x_err[i]) / (tol + tol*(fabs(state[i]) + fabs(derivs[i])));      
+            x_err[i] = fabs(x_err[i]) / (tol + tol*(fabs(state[i]) + dt*fabs(derivs[i])));      
             // // std::cout << std::abs(x_err[i]) << "\n";
             err = fmax(err, x_err[i]);
         }
@@ -431,7 +432,7 @@ __host__ __device__   void trace_particle(particle_t& p, double* srange_arr, dou
         // Compute new step size
 
         // // std::cout << "intermediate val=" << 0.9*pow(err, -1.0/5.0) << "\n";
-        double dt_new = dt*0.9*pow(err, -1.0/5.0);
+        double dt_new = dt*0.9*pow(err, -1.0/4.0);
         if(err > 1.0)
         dt_new = fmax(dt_new, 0.2 * dt);  // Limit step size reduction
         dt_new = fmin(dt_new, 5.0 * dt);  // Limit step size increase
