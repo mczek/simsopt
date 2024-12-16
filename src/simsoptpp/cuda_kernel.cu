@@ -30,6 +30,7 @@ typedef struct particle_t {
     double v_total;
     bool has_left;
     double t;
+    double mu;
 } particle_t;
 
 __global__ void addKernel(int *c, const int* a, const int* b, int size){
@@ -316,7 +317,7 @@ __host__ __device__   void trace_particle(particle_t& p, double* srange_arr, dou
                          double tmax, double m, double q, double psi0){
 
     double mu;
-    double t = 0.0;
+    p.t = 0.0;
 
     double state[4];
     state[0] = p.y1;
@@ -330,7 +331,7 @@ __host__ __device__   void trace_particle(particle_t& p, double* srange_arr, dou
     // dummy call to get norm B
     // std::cout << "dummy call to calc_derivs \n";
     calc_derivs(state, derivs, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, -1, psi0);
-    mu = p.v_perp*p.v_perp/(2*derivs[4]);
+    p.mu = p.v_perp*p.v_perp/(2*derivs[4]);
 
     // dtmax = 0.5*M_PI*G / (modB*vtotal)
     double dtmax = 0.5*M_PI*derivs[5] / (derivs[4]*p.v_total);
@@ -357,7 +358,7 @@ __host__ __device__   void trace_particle(particle_t& p, double* srange_arr, dou
     int counter = 0;
 
 
-    while(t < tmax){
+    while(p.t < tmax){
         // fmt::print("time = {}\n", t);
         // if(counter % 10 == 0){
         // std::cout << "position: " << p.y1 << "\t" << p.y2 << "\t" << p.z << "\t" << "t=" << t  << "\t dt= " << dt << std::endl;
@@ -378,32 +379,32 @@ __host__ __device__   void trace_particle(particle_t& p, double* srange_arr, dou
         state[2] = p.z;
         state[3] = p.v_par;
 
-        calc_derivs(state, derivs, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, mu, psi0);
+        calc_derivs(state, derivs, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
         // std::cout << "k1 " << derivs[0] << "\t" << derivs[1] << "\t" << derivs[2] << "\t" << derivs[3] << "\n";
         // stop if particle lost
  
         
         // Compute k2
         for (int i = 0; i < 4; i++) x_temp[i] = state[i] + dt * a21 * derivs[i];
-        calc_derivs(x_temp, k2, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, mu, psi0);
+        calc_derivs(x_temp, k2, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
         // std::cout << "k2 " << k2[0] << "\t" << k2[1] << "\t" << k2[2] << "\t" << k2[3] << "\n";
 
         // Compute k3
         for (int i = 0; i < 4; i++) x_temp[i] = state[i] + dt * (a31 * derivs[i] + a32 * k2[i]);
-        calc_derivs(x_temp, k3, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, mu, psi0);
+        calc_derivs(x_temp, k3, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
         // std::cout << "k3 " << k3[0] << "\t" << k3[1] << "\t" << k3[2] << "\t" << k3[3] << "\n";
 
         // Compute k4
         for (int i = 0; i < 4; i++) x_temp[i] = state[i] + dt * (a41 * derivs[i] + a42 * k2[i] + a43 * k3[i]);
-        calc_derivs(x_temp, k4, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, mu, psi0);
+        calc_derivs(x_temp, k4, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
 
         // Compute k5
         for (int i = 0; i < 4; i++) x_temp[i] = state[i] + dt * (a51 * derivs[i] + a52 * k2[i] + a53 * k3[i] + a54 * k4[i]);
-        calc_derivs(x_temp, k5, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, mu, psi0);
+        calc_derivs(x_temp, k5, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
 
         // Compute k6
         for (int i = 0; i < 4; i++) x_temp[i] = state[i] + dt * (a61 * derivs[i] + a62 * k2[i] + a63 * k3[i] + a64 * k4[i] + a65 * k5[i]);
-        calc_derivs(x_temp, k6, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, mu, psi0);
+        calc_derivs(x_temp, k6, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
 
         // Compute new state
         for (int i = 0; i < 4; i++) {
@@ -411,7 +412,7 @@ __host__ __device__   void trace_particle(particle_t& p, double* srange_arr, dou
         }
 
         // Compute k7 for error estimation
-        calc_derivs(x_new, k7, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, mu, psi0);
+        calc_derivs(x_new, k7, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
         
         // Compute  error
         // https://live.boost.org/doc/libs/1_82_0/libs/numeric/odeint/doc/html/boost_numeric_odeint/odeint_in_detail/steppers.html
@@ -445,8 +446,8 @@ __host__ __device__   void trace_particle(particle_t& p, double* srange_arr, dou
         if (err <= 1.0) {
             // // std::cout << "point accepted\n";
             // Accept the step
-            t += dt;
-            dt = fmin(dt_new, tmax - t);
+            p.t += dt;
+            dt = fmin(dt_new, tmax - p.t);
 
             p.y1 = x_new[0];
             p.y2 = x_new[1];
@@ -465,7 +466,6 @@ __host__ __device__   void trace_particle(particle_t& p, double* srange_arr, dou
             p.has_left = true;
             return;
         }
-        p.t = t;
 
         counter++;
 
@@ -551,39 +551,39 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
    
 
     // double dt = 1e-5*0.5*M_PI/vtotal;
-    // for(int p=0; p<nparticles; ++p){
-    //     std::cout << "tracing particle " << p << "\n";
-    //     trace_particle(particles[p], srange_arr, trange_arr, zrange_arr, quadpts_arr, tmax, m, q, psi0);
-    // }
+    for(int p=0; p<nparticles; ++p){
+        std::cout << "tracing particle " << p << "\n";
+        trace_particle(particles[p], srange_arr, trange_arr, zrange_arr, quadpts_arr, tmax, m, q, psi0);
+    }
 
     
-    particle_t* particles_d;
-    cudaMalloc((void**)&particles_d, nparticles * sizeof(particle_t));
-    cudaMemcpy(particles_d, particles, nparticles * sizeof(particle_t), cudaMemcpyHostToDevice);
+    // particle_t* particles_d;
+    // cudaMalloc((void**)&particles_d, nparticles * sizeof(particle_t));
+    // cudaMemcpy(particles_d, particles, nparticles * sizeof(particle_t), cudaMemcpyHostToDevice);
 
-    double* srange_d;
-    cudaMalloc((void**)&srange_d, 3 * sizeof(double));
-    cudaMemcpy(srange_d, srange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
+    // double* srange_d;
+    // cudaMalloc((void**)&srange_d, 3 * sizeof(double));
+    // cudaMemcpy(srange_d, srange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
 
-    double* zrange_d;
-    cudaMalloc((void**)&zrange_d, 3 * sizeof(double));
-    cudaMemcpy(zrange_d, zrange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
+    // double* zrange_d;
+    // cudaMalloc((void**)&zrange_d, 3 * sizeof(double));
+    // cudaMemcpy(zrange_d, zrange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
 
-    double* trange_d;
-    cudaMalloc((void**)&trange_d, 3 * sizeof(double));
-    cudaMemcpy(trange_d, trange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
+    // double* trange_d;
+    // cudaMalloc((void**)&trange_d, 3 * sizeof(double));
+    // cudaMemcpy(trange_d, trange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
 
 
-    double* quadpts_d;
-    cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(double));
-    cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(double), cudaMemcpyHostToDevice);
+    // double* quadpts_d;
+    // cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(double));
+    // cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(double), cudaMemcpyHostToDevice);
 
-    int nthreads = 256;
-    int nblks = nparticles / nthreads + 1;
-    std::cout << "starting particle tracing kernel\n";
-    particle_trace_kernel<<<nblks, nthreads>>>(particles_d, srange_d, trange_d, zrange_d, quadpts_d, tmax, m, q, psi0, nparticles);
+    // int nthreads = 256;
+    // int nblks = nparticles / nthreads + 1;
+    // std::cout << "starting particle tracing kernel\n";
+    // particle_trace_kernel<<<nblks, nthreads>>>(particles_d, srange_d, trange_d, zrange_d, quadpts_d, tmax, m, q, psi0, nparticles);
 
-    cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost);
+    // cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost);
 
     
     vector<double> particle_loss(nparticles);
