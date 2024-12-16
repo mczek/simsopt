@@ -34,7 +34,9 @@ typedef struct particle_t {
     double t;
     double mu;
     double state[4];
-    double derivs[6];
+    double derivs[6];    
+    double k2[6], k3[6], k4[6], k5[6], k6[6], k7[6];
+    double x_temp[4], x_new[4], x_err[4];
 } particle_t;
 
 __global__ void addKernel(int *c, const int* a, const int* b, int size){
@@ -367,8 +369,8 @@ __host__ __device__   void trace_particle(particle_t& p, double* srange_arr, dou
     const double bhat1 = 71.0 / 57600.0, bhat3 = -71.0 / 16695.0, bhat4 = 71.0 / 1920.0, bhat5 = -17253.0 / 339200.0, bhat6 = 22.0 / 525.0, bhat7 = -1.0 / 40.0;
 
 
-    double k2[6], k3[6], k4[6], k5[6], k6[6], k7[6];
-    double x_temp[4], x_new[4], x_err[4];
+
+
 
 
     int counter = 0;
@@ -401,34 +403,34 @@ __host__ __device__   void trace_particle(particle_t& p, double* srange_arr, dou
  
         
         // Compute k2
-        for (int i = 0; i < 4; i++) x_temp[i] = p.state[i] + p.dt * a21 * p.derivs[i];
-        calc_derivs(x_temp, k2, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
+        for (int i = 0; i < 4; i++) p.x_temp[i] = p.state[i] + p.dt * a21 * p.derivs[i];
+        calc_derivs(p.x_temp, p.k2, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
         // std::cout << "k2 " << k2[0] << "\t" << k2[1] << "\t" << k2[2] << "\t" << k2[3] << "\n";
 
         // Compute k3
-        for (int i = 0; i < 4; i++) x_temp[i] = p.state[i] + p.dt * (a31 * p.derivs[i] + a32 * k2[i]);
-        calc_derivs(x_temp, k3, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
+        for (int i = 0; i < 4; i++) p.x_temp[i] = p.state[i] + p.dt * (a31 * p.derivs[i] + a32 * p.k2[i]);
+        calc_derivs(p.x_temp, p.k3, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
         // std::cout << "k3 " << k3[0] << "\t" << k3[1] << "\t" << k3[2] << "\t" << k3[3] << "\n";
 
         // Compute k4
-        for (int i = 0; i < 4; i++) x_temp[i] = p.state[i] + p.dt * (a41 * p.derivs[i] + a42 * k2[i] + a43 * k3[i]);
-        calc_derivs(x_temp, k4, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
+        for (int i = 0; i < 4; i++) p.x_temp[i] = p.state[i] + p.dt * (a41 * p.derivs[i] + a42 * p.k2[i] + a43 * p.k3[i]);
+        calc_derivs(p.x_temp, p.k4, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
 
         // Compute k5
-        for (int i = 0; i < 4; i++) x_temp[i] = p.state[i] + p.dt * (a51 * p.derivs[i] + a52 * k2[i] + a53 * k3[i] + a54 * k4[i]);
-        calc_derivs(x_temp, k5, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
+        for (int i = 0; i < 4; i++) p.x_temp[i] = p.state[i] + p.dt * (a51 * p.derivs[i] + a52 * p.k2[i] + a53 * p.k3[i] + a54 * p.k4[i]);
+        calc_derivs(p.x_temp, p.k5, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
 
         // Compute k6
-        for (int i = 0; i < 4; i++) x_temp[i] = p.state[i] + p.dt * (a61 * p.derivs[i] + a62 * k2[i] + a63 * k3[i] + a64 * k4[i] + a65 * k5[i]);
-        calc_derivs(x_temp, k6, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
+        for (int i = 0; i < 4; i++) p.x_temp[i] = p.state[i] + p.dt * (a61 * p.derivs[i] + a62 * p.k2[i] + a63 * p.k3[i] + a64 * p.k4[i] + a65 * p.k5[i]);
+        calc_derivs(p.x_temp, p.k6, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
 
         // Compute new state
         for (int i = 0; i < 4; i++) {
-            x_new[i] = p.state[i] + p.dt * (b1 * p.derivs[i] + b3 * k3[i] + b4 * k4[i] + b5 * k5[i] + b6 * k6[i]);
+            p.x_new[i] = p.state[i] + p.dt * (b1 * p.derivs[i] + b3 * p.k3[i] + b4 * p.k4[i] + b5 * p.k5[i] + b6 * p.k6[i]);
         }
 
         // Compute k7 for error estimation
-        calc_derivs(x_new, k7, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
+        calc_derivs(p.x_new, p.k7, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
         
         // Compute  error
         // https://live.boost.org/doc/libs/1_82_0/libs/numeric/odeint/doc/html/boost_numeric_odeint/odeint_in_detail/steppers.html
@@ -438,10 +440,10 @@ __host__ __device__   void trace_particle(particle_t& p, double* srange_arr, dou
         double err = 0.0;
         bool accept = true;
         for (int i = 0; i < 4; i++) {
-            x_err[i] = p.dt*(bhat1 * p.derivs[i] + bhat3 * k3[i] + bhat4 * k4[i] + bhat5 * k5[i] + bhat6 * k6[i] + bhat7 * k7[i]);
-            x_err[i] = fabs(x_err[i]) / (tol + tol*(fabs(p.state[i]) + p.dt*fabs(p.derivs[i])));      
+            p.x_err[i] = p.dt*(bhat1 * p.derivs[i] + bhat3 * p.k3[i] + bhat4 * p.k4[i] + bhat5 * p.k5[i] + bhat6 * p.k6[i] + bhat7 * p.k7[i]);
+            p.x_err[i] = fabs(p.x_err[i]) / (tol + tol*(fabs(p.state[i]) + p.dt*fabs(p.derivs[i])));      
             // // std::cout << std::abs(x_err[i]) << "\n";
-            err = fmax(err, x_err[i]);
+            err = fmax(err, p.x_err[i]);
         }
 
         // // std::cout << "err= " << err << "\n";
@@ -465,12 +467,12 @@ __host__ __device__   void trace_particle(particle_t& p, double* srange_arr, dou
             p.t += p.dt;
             p.dt = fmin(dt_new, tmax - p.t);
 
-            p.y1 = x_new[0];
-            p.y2 = x_new[1];
-            p.z = x_new[2];
+            p.y1 = p.x_new[0];
+            p.y2 = p.x_new[1];
+            p.z = p.x_new[2];
             // p.z = fmod(p.z, zrange_arr[1]);
             // p.z += zrange_arr[1]*(p.z < 0);
-            p.v_par = x_new[3];
+            p.v_par = p.x_new[3];
         } else {
             // Reject the step and try again with smaller dt
             p.dt = dt_new;
