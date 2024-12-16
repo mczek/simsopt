@@ -29,6 +29,8 @@ typedef struct particle_t {
     double v_perp; // Velocity perpendicular
     double v_total;
     bool has_left;
+    double dt;
+    double dtmax;
     double t;
     double mu;
 } particle_t;
@@ -312,11 +314,10 @@ __host__  __device__ void calc_derivs(double* state, double* out, double* srange
 
 }
 
-
-__host__ __device__   void trace_particle(particle_t& p, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr,
+// set initial time step, calculate mu
+__host__ __device__ void setup_particle(particle_t& p, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr,
                          double tmax, double m, double q, double psi0){
-
-    double mu;
+                             // double mu;
     p.t = 0.0;
 
     double state[4];
@@ -334,10 +335,25 @@ __host__ __device__   void trace_particle(particle_t& p, double* srange_arr, dou
     p.mu = p.v_perp*p.v_perp/(2*derivs[4]);
 
     // dtmax = 0.5*M_PI*G / (modB*vtotal)
-    double dtmax = 0.5*M_PI*derivs[5] / (derivs[4]*p.v_total);
-    double dt = 1e-3*dtmax;
+    p.dtmax = 0.5*M_PI*derivs[5] / (derivs[4]*p.v_total);
+    p.dt = 1e-3*p.dtmax;
 
+}
 
+__host__ __device__   void trace_particle(particle_t& p, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr,
+                         double tmax, double m, double q, double psi0){
+
+   
+    setup_particle(p, srange_arr, trange_arr, zrange_arr, quadpts_arr, tmax, m, q, psi0);
+
+    double state[4];
+    state[0] = p.y1;
+    state[1] = p.y2;
+    state[2] = p.z;
+    state[3] = p.v_par;
+    // state[4] = p.v_perp;
+
+    double derivs[6];
     // std::cout << "initial modB " << derivs[4] << std::endl; 
 
     // std::cout << "modB interp " << derivs[4] << std::endl;
@@ -385,30 +401,30 @@ __host__ __device__   void trace_particle(particle_t& p, double* srange_arr, dou
  
         
         // Compute k2
-        for (int i = 0; i < 4; i++) x_temp[i] = state[i] + dt * a21 * derivs[i];
+        for (int i = 0; i < 4; i++) x_temp[i] = state[i] + p.dt * a21 * derivs[i];
         calc_derivs(x_temp, k2, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
         // std::cout << "k2 " << k2[0] << "\t" << k2[1] << "\t" << k2[2] << "\t" << k2[3] << "\n";
 
         // Compute k3
-        for (int i = 0; i < 4; i++) x_temp[i] = state[i] + dt * (a31 * derivs[i] + a32 * k2[i]);
+        for (int i = 0; i < 4; i++) x_temp[i] = state[i] + p.dt * (a31 * derivs[i] + a32 * k2[i]);
         calc_derivs(x_temp, k3, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
         // std::cout << "k3 " << k3[0] << "\t" << k3[1] << "\t" << k3[2] << "\t" << k3[3] << "\n";
 
         // Compute k4
-        for (int i = 0; i < 4; i++) x_temp[i] = state[i] + dt * (a41 * derivs[i] + a42 * k2[i] + a43 * k3[i]);
+        for (int i = 0; i < 4; i++) x_temp[i] = state[i] + p.dt * (a41 * derivs[i] + a42 * k2[i] + a43 * k3[i]);
         calc_derivs(x_temp, k4, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
 
         // Compute k5
-        for (int i = 0; i < 4; i++) x_temp[i] = state[i] + dt * (a51 * derivs[i] + a52 * k2[i] + a53 * k3[i] + a54 * k4[i]);
+        for (int i = 0; i < 4; i++) x_temp[i] = state[i] + p.dt * (a51 * derivs[i] + a52 * k2[i] + a53 * k3[i] + a54 * k4[i]);
         calc_derivs(x_temp, k5, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
 
         // Compute k6
-        for (int i = 0; i < 4; i++) x_temp[i] = state[i] + dt * (a61 * derivs[i] + a62 * k2[i] + a63 * k3[i] + a64 * k4[i] + a65 * k5[i]);
+        for (int i = 0; i < 4; i++) x_temp[i] = state[i] + p.dt * (a61 * derivs[i] + a62 * k2[i] + a63 * k3[i] + a64 * k4[i] + a65 * k5[i]);
         calc_derivs(x_temp, k6, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
 
         // Compute new state
         for (int i = 0; i < 4; i++) {
-            x_new[i] = state[i] + dt * (b1 * derivs[i] + b3 * k3[i] + b4 * k4[i] + b5 * k5[i] + b6 * k6[i]);
+            x_new[i] = state[i] + p.dt * (b1 * derivs[i] + b3 * k3[i] + b4 * k4[i] + b5 * k5[i] + b6 * k6[i]);
         }
 
         // Compute k7 for error estimation
@@ -422,8 +438,8 @@ __host__ __device__   void trace_particle(particle_t& p, double* srange_arr, dou
         double err = 0.0;
         bool accept = true;
         for (int i = 0; i < 4; i++) {
-            x_err[i] = dt*(bhat1 * derivs[i] + bhat3 * k3[i] + bhat4 * k4[i] + bhat5 * k5[i] + bhat6 * k6[i] + bhat7 * k7[i]);
-            x_err[i] = fabs(x_err[i]) / (tol + tol*(fabs(state[i]) + dt*fabs(derivs[i])));      
+            x_err[i] = p.dt*(bhat1 * derivs[i] + bhat3 * k3[i] + bhat4 * k4[i] + bhat5 * k5[i] + bhat6 * k6[i] + bhat7 * k7[i]);
+            x_err[i] = fabs(x_err[i]) / (tol + tol*(fabs(state[i]) + p.dt*fabs(derivs[i])));      
             // // std::cout << std::abs(x_err[i]) << "\n";
             err = fmax(err, x_err[i]);
         }
@@ -433,21 +449,21 @@ __host__ __device__   void trace_particle(particle_t& p, double* srange_arr, dou
         // Compute new step size
 
         // // std::cout << "intermediate val=" << 0.9*pow(err, -1.0/5.0) << "\n";
-        double dt_new = dt*0.9*pow(err, -1.0/4.0);
+        double dt_new = p.dt*0.9*pow(err, -1.0/4.0);
         if(err > 1.0)
-        dt_new = fmax(dt_new, 0.2 * dt);  // Limit step size reduction
-        dt_new = fmin(dt_new, 5.0 * dt);  // Limit step size increase
-        dt_new = fmin(dtmax, dt_new);
+        dt_new = fmax(dt_new, 0.2 * p.dt);  // Limit step size reduction
+        dt_new = fmin(dt_new, 5.0 * p.dt);  // Limit step size increase
+        dt_new = fmin(p.dtmax, dt_new);
         if ((0.5 < err) & (err < 1.0)){
-            dt_new = dt;
+            dt_new = p.dt;
         }
         // dt_new = std::max(dt_new, 1e-9); // Limit smallest step size
         // // std::cout << "dt_new= " << dt_new << "\t dt=" << dt << "\n";
         if (err <= 1.0) {
             // // std::cout << "point accepted\n";
             // Accept the step
-            p.t += dt;
-            dt = fmin(dt_new, tmax - p.t);
+            p.t += p.dt;
+            p.dt = fmin(dt_new, tmax - p.t);
 
             p.y1 = x_new[0];
             p.y2 = x_new[1];
@@ -457,7 +473,7 @@ __host__ __device__   void trace_particle(particle_t& p, double* srange_arr, dou
             p.v_par = x_new[3];
         } else {
             // Reject the step and try again with smaller dt
-            dt = dt_new;
+            p.dt = dt_new;
         }
 
         double s = sqrt(p.y1*p.y1 + p.y2*p.y2);
