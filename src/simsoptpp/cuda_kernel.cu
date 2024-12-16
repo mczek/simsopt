@@ -33,6 +33,7 @@ typedef struct particle_t {
     double dtmax;
     double t;
     double mu;
+    double state[4];
 } particle_t;
 
 __global__ void addKernel(int *c, const int* a, const int* b, int size){
@@ -346,11 +347,11 @@ __host__ __device__   void trace_particle(particle_t& p, double* srange_arr, dou
    
     setup_particle(p, srange_arr, trange_arr, zrange_arr, quadpts_arr, tmax, m, q, psi0);
 
-    double state[4];
-    state[0] = p.y1;
-    state[1] = p.y2;
-    state[2] = p.z;
-    state[3] = p.v_par;
+    // double state[4];
+    // state[0] = p.y1;
+    // state[1] = p.y2;
+    // state[2] = p.z;
+    // state[3] = p.v_par;
     // state[4] = p.v_perp;
 
     double derivs[6];
@@ -390,41 +391,41 @@ __host__ __device__   void trace_particle(particle_t& p, double* srange_arr, dou
         */
 
         // compute k1
-        state[0] = p.y1;
-        state[1] = p.y2;
-        state[2] = p.z;
-        state[3] = p.v_par;
+        p.state[0] = p.y1;
+        p.state[1] = p.y2;
+        p.state[2] = p.z;
+        p.state[3] = p.v_par;
 
-        calc_derivs(state, derivs, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
+        calc_derivs(p.state, derivs, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
         // std::cout << "k1 " << derivs[0] << "\t" << derivs[1] << "\t" << derivs[2] << "\t" << derivs[3] << "\n";
         // stop if particle lost
  
         
         // Compute k2
-        for (int i = 0; i < 4; i++) x_temp[i] = state[i] + p.dt * a21 * derivs[i];
+        for (int i = 0; i < 4; i++) x_temp[i] = p.state[i] + p.dt * a21 * derivs[i];
         calc_derivs(x_temp, k2, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
         // std::cout << "k2 " << k2[0] << "\t" << k2[1] << "\t" << k2[2] << "\t" << k2[3] << "\n";
 
         // Compute k3
-        for (int i = 0; i < 4; i++) x_temp[i] = state[i] + p.dt * (a31 * derivs[i] + a32 * k2[i]);
+        for (int i = 0; i < 4; i++) x_temp[i] = p.state[i] + p.dt * (a31 * derivs[i] + a32 * k2[i]);
         calc_derivs(x_temp, k3, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
         // std::cout << "k3 " << k3[0] << "\t" << k3[1] << "\t" << k3[2] << "\t" << k3[3] << "\n";
 
         // Compute k4
-        for (int i = 0; i < 4; i++) x_temp[i] = state[i] + p.dt * (a41 * derivs[i] + a42 * k2[i] + a43 * k3[i]);
+        for (int i = 0; i < 4; i++) x_temp[i] = p.state[i] + p.dt * (a41 * derivs[i] + a42 * k2[i] + a43 * k3[i]);
         calc_derivs(x_temp, k4, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
 
         // Compute k5
-        for (int i = 0; i < 4; i++) x_temp[i] = state[i] + p.dt * (a51 * derivs[i] + a52 * k2[i] + a53 * k3[i] + a54 * k4[i]);
+        for (int i = 0; i < 4; i++) x_temp[i] = p.state[i] + p.dt * (a51 * derivs[i] + a52 * k2[i] + a53 * k3[i] + a54 * k4[i]);
         calc_derivs(x_temp, k5, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
 
         // Compute k6
-        for (int i = 0; i < 4; i++) x_temp[i] = state[i] + p.dt * (a61 * derivs[i] + a62 * k2[i] + a63 * k3[i] + a64 * k4[i] + a65 * k5[i]);
+        for (int i = 0; i < 4; i++) x_temp[i] = p.state[i] + p.dt * (a61 * derivs[i] + a62 * k2[i] + a63 * k3[i] + a64 * k4[i] + a65 * k5[i]);
         calc_derivs(x_temp, k6, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
 
         // Compute new state
         for (int i = 0; i < 4; i++) {
-            x_new[i] = state[i] + p.dt * (b1 * derivs[i] + b3 * k3[i] + b4 * k4[i] + b5 * k5[i] + b6 * k6[i]);
+            x_new[i] = p.state[i] + p.dt * (b1 * derivs[i] + b3 * k3[i] + b4 * k4[i] + b5 * k5[i] + b6 * k6[i]);
         }
 
         // Compute k7 for error estimation
@@ -439,7 +440,7 @@ __host__ __device__   void trace_particle(particle_t& p, double* srange_arr, dou
         bool accept = true;
         for (int i = 0; i < 4; i++) {
             x_err[i] = p.dt*(bhat1 * derivs[i] + bhat3 * k3[i] + bhat4 * k4[i] + bhat5 * k5[i] + bhat6 * k6[i] + bhat7 * k7[i]);
-            x_err[i] = fabs(x_err[i]) / (tol + tol*(fabs(state[i]) + p.dt*fabs(derivs[i])));      
+            x_err[i] = fabs(x_err[i]) / (tol + tol*(fabs(p.state[i]) + p.dt*fabs(derivs[i])));      
             // // std::cout << std::abs(x_err[i]) << "\n";
             err = fmax(err, x_err[i]);
         }
