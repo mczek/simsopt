@@ -381,6 +381,58 @@ __host__ __device__ void build_state(particle_t& p, int deriv_id){
     }
 }
 
+
+__host__ __device__ void adjust_time(particle_t& p, double tmax){
+
+    const double bhat1 = 71.0 / 57600.0, bhat3 = -71.0 / 16695.0, bhat4 = 71.0 / 1920.0, bhat5 = -17253.0 / 339200.0, bhat6 = 22.0 / 525.0, bhat7 = -1.0 / 40.0;
+
+    // Compute  error
+    // https://live.boost.org/doc/libs/1_82_0/libs/numeric/odeint/doc/html/boost_numeric_odeint/odeint_in_detail/steppers.html
+    // resolve typo in boost docs: https://numerical.recipes/book.html
+    double tol=1e-9;
+    // // std::cout << "error elts \n";
+    double err = 0.0;
+    bool accept = true;
+    for (int i = 0; i < 4; i++) {
+        p.x_err[i] = p.dt*(bhat1 * p.derivs[i] + bhat3 * p.k3[i] + bhat4 * p.k4[i] + bhat5 * p.k5[i] + bhat6 * p.k6[i] + bhat7 * p.k7[i]);
+        p.x_err[i] = fabs(p.x_err[i]) / (tol + tol*(fabs(p.state[i]) + p.dt*fabs(p.derivs[i])));      
+        // // std::cout << std::abs(x_err[i]) << "\n";
+        err = fmax(err, p.x_err[i]);
+    }
+
+    // // std::cout << "err= " << err << "\n";
+
+    // Compute new step size
+
+    // // std::cout << "intermediate val=" << 0.9*pow(err, -1.0/5.0) << "\n";
+    double dt_new = p.dt*0.9*pow(err, -1.0/4.0);
+    if(err > 1.0)
+    dt_new = fmax(dt_new, 0.2 * p.dt);  // Limit step size reduction
+    dt_new = fmin(dt_new, 5.0 * p.dt);  // Limit step size increase
+    dt_new = fmin(p.dtmax, dt_new);
+    if ((0.5 < err) & (err < 1.0)){
+        dt_new = p.dt;
+    }
+    // dt_new = std::max(dt_new, 1e-9); // Limit smallest step size
+    // // std::cout << "dt_new= " << dt_new << "\t dt=" << dt << "\n";
+    if (err <= 1.0) {
+        // // std::cout << "point accepted\n";
+        // Accept the step
+        p.t += p.dt;
+        p.dt = fmin(dt_new, tmax - p.t);
+
+        p.y1 = p.x_temp[0];
+        p.y2 = p.x_temp[1];
+        p.z = p.x_temp[2];
+        // p.z = fmod(p.z, zrange_arr[1]);
+        // p.z += zrange_arr[1]*(p.z < 0);
+        p.v_par = p.x_temp[3];
+    } else {
+        // Reject the step and try again with smaller dt
+        p.dt = dt_new;
+    }
+
+}
 __host__ __device__   void trace_particle(particle_t& p, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr,
                          double tmax, double m, double q, double psi0){
 
@@ -399,9 +451,8 @@ __host__ __device__   void trace_particle(particle_t& p, double* srange_arr, dou
 
     // std::cout << "modB interp " << derivs[4] << std::endl;
 
-    const double b1 = 35.0 / 384.0, b3 = 500.0 / 1113.0, b4 = 125.0 / 192.0, b5 = -2187.0 / 6784.0, b6 = 11.0 / 84.0;
+    // const double b1 = 35.0 / 384.0, b3 = 500.0 / 1113.0, b4 = 125.0 / 192.0, b5 = -2187.0 / 6784.0, b6 = 11.0 / 84.0;
 
-    const double bhat1 = 71.0 / 57600.0, bhat3 = -71.0 / 16695.0, bhat4 = 71.0 / 1920.0, bhat5 = -17253.0 / 339200.0, bhat6 = 22.0 / 525.0, bhat7 = -1.0 / 40.0;
 
  
 
@@ -461,58 +512,11 @@ __host__ __device__   void trace_particle(particle_t& p, double* srange_arr, dou
         build_state(p, 6);
         calc_derivs(p.x_temp, p.k6, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
 
-        // Compute new state
-
-
         // Compute k7 for error estimation
         build_state(p, 6);
         calc_derivs(p.x_temp, p.k7, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
         
-        // Compute  error
-        // https://live.boost.org/doc/libs/1_82_0/libs/numeric/odeint/doc/html/boost_numeric_odeint/odeint_in_detail/steppers.html
-        // resolve typo in boost docs: https://numerical.recipes/book.html
-        double tol=1e-9;
-        // // std::cout << "error elts \n";
-        double err = 0.0;
-        bool accept = true;
-        for (int i = 0; i < 4; i++) {
-            p.x_err[i] = p.dt*(bhat1 * p.derivs[i] + bhat3 * p.k3[i] + bhat4 * p.k4[i] + bhat5 * p.k5[i] + bhat6 * p.k6[i] + bhat7 * p.k7[i]);
-            p.x_err[i] = fabs(p.x_err[i]) / (tol + tol*(fabs(p.state[i]) + p.dt*fabs(p.derivs[i])));      
-            // // std::cout << std::abs(x_err[i]) << "\n";
-            err = fmax(err, p.x_err[i]);
-        }
-
-        // // std::cout << "err= " << err << "\n";
-
-        // Compute new step size
-
-        // // std::cout << "intermediate val=" << 0.9*pow(err, -1.0/5.0) << "\n";
-        double dt_new = p.dt*0.9*pow(err, -1.0/4.0);
-        if(err > 1.0)
-        dt_new = fmax(dt_new, 0.2 * p.dt);  // Limit step size reduction
-        dt_new = fmin(dt_new, 5.0 * p.dt);  // Limit step size increase
-        dt_new = fmin(p.dtmax, dt_new);
-        if ((0.5 < err) & (err < 1.0)){
-            dt_new = p.dt;
-        }
-        // dt_new = std::max(dt_new, 1e-9); // Limit smallest step size
-        // // std::cout << "dt_new= " << dt_new << "\t dt=" << dt << "\n";
-        if (err <= 1.0) {
-            // // std::cout << "point accepted\n";
-            // Accept the step
-            p.t += p.dt;
-            p.dt = fmin(dt_new, tmax - p.t);
-
-            p.y1 = p.x_temp[0];
-            p.y2 = p.x_temp[1];
-            p.z = p.x_temp[2];
-            // p.z = fmod(p.z, zrange_arr[1]);
-            // p.z += zrange_arr[1]*(p.z < 0);
-            p.v_par = p.x_temp[3];
-        } else {
-            // Reject the step and try again with smaller dt
-            p.dt = dt_new;
-        }
+        adjust_time(p, tmax);
 
         double s = sqrt(p.y1*p.y1 + p.y2*p.y2);
         if(s >= 1){
