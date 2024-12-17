@@ -399,7 +399,7 @@ __host__ __device__ void build_state(particle_t& p, int deriv_id){
             break;
     }
 
-    for (int j=0; j<6; ++j){
+    for (int j=0; j<=6; ++j){
         for(int i=0; i<4; ++i){
             p.x_temp[i] += p.dt * wgts[j] * p.derivs[6*j+i];
         }
@@ -539,7 +539,7 @@ __host__ __device__   void trace_particle(particle_t& p, double* srange_arr, dou
         calc_derivs(p.x_temp, p.derivs+30, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
 
         // Compute k7 for error estimation
-        build_state(p, 6);
+        build_state(p, 7);
         calc_derivs(p.x_temp, p.derivs+36, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
         
         adjust_time(p, tmax);
