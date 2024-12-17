@@ -34,8 +34,8 @@ typedef struct particle_t {
     double t;
     double mu;
     double state[4];
-    double derivs[6];
-    double k2[6], k3[6], k4[6], k5[6], k6[6], k7[6];   
+    double derivs[42];
+    // double k2[6], k3[6], k4[6], k5[6], k6[6], k7[6];   
     double x_temp[4], x_err[4];
 } particle_t;
 
@@ -343,42 +343,68 @@ __host__ __device__ void setup_particle(particle_t& p, double* srange_arr, doubl
 }
 
 __host__ __device__ void build_state(particle_t& p, int deriv_id){
-    const double a21 = 1.0 / 5.0;
-    const double a31 = 3.0 / 40.0, a32 = 9.0 / 40.0;
-    const double a41 = 44.0 / 45.0, a42 = -56.0 / 15.0, a43 = 32.0 / 9.0;
-    const double a51 = 19372.0 / 6561.0, a52 = -25360.0 / 2187.0, a53 = 64448.0 / 6561.0, a54 = -212.0 / 729.0;
-    const double a61 = 9017.0 / 3168.0, a62 = -355.0 / 33.0, a63 = 46732.0 / 5247.0, a64 = 49.0 / 176.0, a65 = -5103.0 / 18656.0;
+   
+
+    // const double a61 = 9017.0 / 3168.0, a62 = -355.0 / 33.0, a63 = 46732.0 / 5247.0, a64 = 49.0 / 176.0, a65 = -5103.0 / 18656.0;
     const double b1 = 35.0 / 384.0, b3 = 500.0 / 1113.0, b4 = 125.0 / 192.0, b5 = -2187.0 / 6784.0, b6 = 11.0 / 84.0;
     // const double bhat1 = 5179.0 / 57600.0, bhat3 = 7571.0 / 16695.0, bhat4 = 393.0 / 640.0, bhat5 = -92097.0 / 339200.0, bhat6 = 187.0 / 2100.0, bhat7 = 1.0 / 40.0;
-    const double bhat1 = 71.0 / 57600.0, bhat3 = -71.0 / 16695.0, bhat4 = 71.0 / 1920.0, bhat5 = -17253.0 / 339200.0, bhat6 = 22.0 / 525.0, bhat7 = -1.0 / 40.0;
+    // const double bhat1 = 71.0 / 57600.0, bhat3 = -71.0 / 16695.0, bhat4 = 71.0 / 1920.0, bhat5 = -17253.0 / 339200.0, bhat6 = 22.0 / 525.0, bhat7 = -1.0 / 40.0;
+
+    double wgts[6] = {0}; 
+    for (int i = 0; i < 4; i++) p.x_temp[i] = p.state[i];
 
     switch(deriv_id){
         case 1:
-            for (int i = 0; i < 4; i++) p.x_temp[i] = p.state[i];
+            // wgts = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
             break;
         case 2:
-            for (int i = 0; i < 4; i++) p.x_temp[i] = p.state[i] + p.dt * a21 * p.derivs[i];
+            // wgts = {1.0/5.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+            wgts[0] = 1.0/5.0;
             break;
         case 3:
-            for (int i = 0; i < 4; i++) p.x_temp[i] = p.state[i] + p.dt * (a31 * p.derivs[i] + a32 * p.k2[i]);
+            // wgts = {3.0 / 40.0, 9.0 / 40.0, 0.0, 0.0, 0.0, 0.0};
+            wgts[0] = 3.0 / 40.0;
+            wgts[1] = 9.0 / 40.0;
             break;
         case 4:
-            for (int i = 0; i < 4; i++) p.x_temp[i] = p.state[i] + p.dt * (a41 * p.derivs[i] + a42 * p.k2[i] + a43 * p.k3[i]);
+            // wgts = {44.0 / 45.0, -56.0 / 15.0, 32.0 / 9.0, 0.0, 0.0, 0.0, 0.0};
+            wgts[0] = 44.0 / 45.0;
+            wgts[1] = -56.0 / 15.0;
+            wgts[2] = 32.0 / 9.0;
             break;
         case 5:
-            for (int i = 0; i < 4; i++) p.x_temp[i] = p.state[i] + p.dt * (a51 * p.derivs[i] + a52 * p.k2[i] + a53 * p.k3[i] + a54 * p.k4[i]);
+            // wgts = {19372.0 / 6561.0, -25360.0 / 2187.0, 64448.0 / 6561.0, -212.0 / 729.0, 0.0, 0.0, 0.0};
+            wgts[0] = 19372.0 / 6561.0;
+            wgts[1] = -25360.0 / 2187.0;
+            wgts[2] = 64448.0 / 6561.0;
+            wgts[3] = -212.0 / 729.0;
             break;
         case 6:
-            for (int i = 0; i < 4; i++) p.x_temp[i] = p.state[i] + p.dt * (a61 * p.derivs[i] + a62 * p.k2[i] + a63 * p.k3[i] + a64 * p.k4[i] + a65 * p.k5[i]);
+            // wgts = {9017.0 / 3168.0, -355.0 / 33.0, 46732.0 / 5247.0, 49.0 / 176.0,-5103.0 / 18656.0, 0.0, 0.0};
+            wgts[0] = 9017.0 / 3168.0;
+            wgts[1] = -355.0 / 33.0;
+            wgts[2] = 46732.0 / 5247.0;
+            wgts[3] = 49.0 / 176.0;
+            wgts[4] = -5103.0 / 18656.0;
             break;
         case 7:
-            for (int i = 0; i < 4; i++) {
-                p.x_temp[i] = p.state[i] + p.dt * (b1 * p.derivs[i] + b3 * p.k3[i] + b4 * p.k4[i] + b5 * p.k5[i] + b6 * p.k6[i]);
-            }
+            // wgts = {35.0 / 384.0, 0.0, 500.0 / 1113.0, 125.0 / 192.0, -2187.0 / 6784.0, 11.0 / 84.0, 0.0};
+            wgts[0] = 35.0 / 384.0;
+            wgts[2] = 500.0 / 1113.0;
+            wgts[3] = 125.0 / 192.0; 
+            wgts[4] = -2187.0 / 6784.0;
+            wgts[5] = 11.0 / 84.0;
             break;
         default:
             break;
     }
+
+    for (int j=0; j<6; ++j){
+        for(int i=0; i<4; ++i){
+            p.x_temp[i] += p.dt * wgts[j] * p.derivs[6*j+i];
+        }
+    } 
+
 }
 
 
@@ -394,7 +420,7 @@ __host__ __device__ void adjust_time(particle_t& p, double tmax){
     double err = 0.0;
     bool accept = true;
     for (int i = 0; i < 4; i++) {
-        p.x_err[i] = p.dt*(bhat1 * p.derivs[i] + bhat3 * p.k3[i] + bhat4 * p.k4[i] + bhat5 * p.k5[i] + bhat6 * p.k6[i] + bhat7 * p.k7[i]);
+        p.x_err[i] = p.dt*(bhat1 * p.derivs[i] + bhat3 * p.derivs[12+i] + bhat4 * p.derivs[18+i] + bhat5 * p.derivs[24+i] + bhat6 * p.derivs[30+i] + bhat7 * p.derivs[36+i]);
         p.x_err[i] = fabs(p.x_err[i]) / (tol + tol*(fabs(p.state[i]) + p.dt*fabs(p.derivs[i])));      
         // // std::cout << std::abs(x_err[i]) << "\n";
         err = fmax(err, p.x_err[i]);
@@ -492,29 +518,29 @@ __host__ __device__   void trace_particle(particle_t& p, double* srange_arr, dou
         
         // Compute k2
         build_state(p, 2);
-        calc_derivs(p.x_temp, p.k2, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
+        calc_derivs(p.x_temp, p.derivs+6, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
         // std::cout << "k2 " << k2[0] << "\t" << k2[1] << "\t" << k2[2] << "\t" << k2[3] << "\n";
 
         // Compute k3
         build_state(p, 3);
-        calc_derivs(p.x_temp, p.k3, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
+        calc_derivs(p.x_temp, p.derivs+12, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
         // std::cout << "k3 " << k3[0] << "\t" << k3[1] << "\t" << k3[2] << "\t" << k3[3] << "\n";
 
         // Compute k4
         build_state(p, 4);
-        calc_derivs(p.x_temp, p.k4, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
+        calc_derivs(p.x_temp, p.derivs+18, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
 
         // Compute k5
         build_state(p, 5);
-        calc_derivs(p.x_temp, p.k5, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
+        calc_derivs(p.x_temp, p.derivs+24, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
 
         // Compute k6
         build_state(p, 6);
-        calc_derivs(p.x_temp, p.k6, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
+        calc_derivs(p.x_temp, p.derivs+30, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
 
         // Compute k7 for error estimation
         build_state(p, 6);
-        calc_derivs(p.x_temp, p.k7, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
+        calc_derivs(p.x_temp, p.derivs+36, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
         
         adjust_time(p, tmax);
 
