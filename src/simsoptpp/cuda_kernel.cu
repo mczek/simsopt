@@ -34,8 +34,8 @@ typedef struct particle_t {
     double t;
     double mu;
     double state[4];
-    double derivs[6];    
-    double k2[6], k3[6], k4[6], k5[6], k6[6], k7[6];
+    double derivs[6];
+    double k2[6], k3[6], k4[6], k5[6], k6[6], k7[6];   
     double x_temp[4], x_new[4], x_err[4];
 } particle_t;
 
@@ -342,6 +342,45 @@ __host__ __device__ void setup_particle(particle_t& p, double* srange_arr, doubl
 
 }
 
+__host__ __device__ void build_state(particle_t& p, int deriv_id){
+    const double a21 = 1.0 / 5.0;
+    const double a31 = 3.0 / 40.0, a32 = 9.0 / 40.0;
+    const double a41 = 44.0 / 45.0, a42 = -56.0 / 15.0, a43 = 32.0 / 9.0;
+    const double a51 = 19372.0 / 6561.0, a52 = -25360.0 / 2187.0, a53 = 64448.0 / 6561.0, a54 = -212.0 / 729.0;
+    const double a61 = 9017.0 / 3168.0, a62 = -355.0 / 33.0, a63 = 46732.0 / 5247.0, a64 = 49.0 / 176.0, a65 = -5103.0 / 18656.0;
+    const double b1 = 35.0 / 384.0, b3 = 500.0 / 1113.0, b4 = 125.0 / 192.0, b5 = -2187.0 / 6784.0, b6 = 11.0 / 84.0;
+    // const double bhat1 = 5179.0 / 57600.0, bhat3 = 7571.0 / 16695.0, bhat4 = 393.0 / 640.0, bhat5 = -92097.0 / 339200.0, bhat6 = 187.0 / 2100.0, bhat7 = 1.0 / 40.0;
+    const double bhat1 = 71.0 / 57600.0, bhat3 = -71.0 / 16695.0, bhat4 = 71.0 / 1920.0, bhat5 = -17253.0 / 339200.0, bhat6 = 22.0 / 525.0, bhat7 = -1.0 / 40.0;
+
+    switch(deriv_id){
+        case 1:
+            for (int i = 0; i < 4; i++) p.x_temp[i] = p.state[i];
+            break;
+        case 2:
+            for (int i = 0; i < 4; i++) p.x_temp[i] = p.state[i] + p.dt * a21 * p.derivs[i];
+            break;
+        case 3:
+            for (int i = 0; i < 4; i++) p.x_temp[i] = p.state[i] + p.dt * (a31 * p.derivs[i] + a32 * p.k2[i]);
+            break;
+        case 4:
+            for (int i = 0; i < 4; i++) p.x_temp[i] = p.state[i] + p.dt * (a41 * p.derivs[i] + a42 * p.k2[i] + a43 * p.k3[i]);
+            break;
+        case 5:
+            for (int i = 0; i < 4; i++) p.x_temp[i] = p.state[i] + p.dt * (a51 * p.derivs[i] + a52 * p.k2[i] + a53 * p.k3[i] + a54 * p.k4[i]);
+            break;
+        case 6:
+            for (int i = 0; i < 4; i++) p.x_temp[i] = p.state[i] + p.dt * (a61 * p.derivs[i] + a62 * p.k2[i] + a63 * p.k3[i] + a64 * p.k4[i] + a65 * p.k5[i]);
+            break;
+        case 7:
+            for (int i = 0; i < 4; i++) {
+                p.x_new[i] = p.state[i] + p.dt * (b1 * p.derivs[i] + b3 * p.k3[i] + b4 * p.k4[i] + b5 * p.k5[i] + b6 * p.k6[i]);
+            }
+            break;
+        default:
+            break;
+    }
+}
+
 __host__ __device__   void trace_particle(particle_t& p, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr,
                          double tmax, double m, double q, double psi0){
 
@@ -359,16 +398,12 @@ __host__ __device__   void trace_particle(particle_t& p, double* srange_arr, dou
     // std::cout << "initial modB " << derivs[4] << std::endl; 
 
     // std::cout << "modB interp " << derivs[4] << std::endl;
-    const double a21 = 1.0 / 5.0;
-    const double a31 = 3.0 / 40.0, a32 = 9.0 / 40.0;
-    const double a41 = 44.0 / 45.0, a42 = -56.0 / 15.0, a43 = 32.0 / 9.0;
-    const double a51 = 19372.0 / 6561.0, a52 = -25360.0 / 2187.0, a53 = 64448.0 / 6561.0, a54 = -212.0 / 729.0;
-    const double a61 = 9017.0 / 3168.0, a62 = -355.0 / 33.0, a63 = 46732.0 / 5247.0, a64 = 49.0 / 176.0, a65 = -5103.0 / 18656.0;
+
     const double b1 = 35.0 / 384.0, b3 = 500.0 / 1113.0, b4 = 125.0 / 192.0, b5 = -2187.0 / 6784.0, b6 = 11.0 / 84.0;
-    // const double bhat1 = 5179.0 / 57600.0, bhat3 = 7571.0 / 16695.0, bhat4 = 393.0 / 640.0, bhat5 = -92097.0 / 339200.0, bhat6 = 187.0 / 2100.0, bhat7 = 1.0 / 40.0;
+
     const double bhat1 = 71.0 / 57600.0, bhat3 = -71.0 / 16695.0, bhat4 = 71.0 / 1920.0, bhat5 = -17253.0 / 339200.0, bhat6 = 22.0 / 525.0, bhat7 = -1.0 / 40.0;
 
-
+ 
 
 
 
@@ -397,38 +432,40 @@ __host__ __device__   void trace_particle(particle_t& p, double* srange_arr, dou
         p.state[2] = p.z;
         p.state[3] = p.v_par;
 
-        calc_derivs(p.state, p.derivs, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
+        
+        build_state(p, 1);
+        calc_derivs(p.x_temp, p.derivs, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
         // std::cout << "k1 " << derivs[0] << "\t" << derivs[1] << "\t" << derivs[2] << "\t" << derivs[3] << "\n";
         // stop if particle lost
  
         
         // Compute k2
-        for (int i = 0; i < 4; i++) p.x_temp[i] = p.state[i] + p.dt * a21 * p.derivs[i];
+        build_state(p, 2);
         calc_derivs(p.x_temp, p.k2, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
         // std::cout << "k2 " << k2[0] << "\t" << k2[1] << "\t" << k2[2] << "\t" << k2[3] << "\n";
 
         // Compute k3
-        for (int i = 0; i < 4; i++) p.x_temp[i] = p.state[i] + p.dt * (a31 * p.derivs[i] + a32 * p.k2[i]);
+        build_state(p, 3);
         calc_derivs(p.x_temp, p.k3, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
         // std::cout << "k3 " << k3[0] << "\t" << k3[1] << "\t" << k3[2] << "\t" << k3[3] << "\n";
 
         // Compute k4
-        for (int i = 0; i < 4; i++) p.x_temp[i] = p.state[i] + p.dt * (a41 * p.derivs[i] + a42 * p.k2[i] + a43 * p.k3[i]);
+        build_state(p, 4);
         calc_derivs(p.x_temp, p.k4, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
 
         // Compute k5
-        for (int i = 0; i < 4; i++) p.x_temp[i] = p.state[i] + p.dt * (a51 * p.derivs[i] + a52 * p.k2[i] + a53 * p.k3[i] + a54 * p.k4[i]);
+        build_state(p, 5);
         calc_derivs(p.x_temp, p.k5, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
 
         // Compute k6
-        for (int i = 0; i < 4; i++) p.x_temp[i] = p.state[i] + p.dt * (a61 * p.derivs[i] + a62 * p.k2[i] + a63 * p.k3[i] + a64 * p.k4[i] + a65 * p.k5[i]);
+        build_state(p, 6);
         calc_derivs(p.x_temp, p.k6, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
 
         // Compute new state
+
         for (int i = 0; i < 4; i++) {
             p.x_new[i] = p.state[i] + p.dt * (b1 * p.derivs[i] + b3 * p.k3[i] + b4 * p.k4[i] + b5 * p.k5[i] + b6 * p.k6[i]);
         }
-
         // Compute k7 for error estimation
         calc_derivs(p.x_new, p.k7, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
         
@@ -570,7 +607,7 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
 
     // double dt = 1e-5*0.5*M_PI/vtotal;
     for(int p=0; p<nparticles; ++p){
-        std::cout << "tracing particle " << p << "\n";
+        std::cout << "tracing particle " << p << std::endl;
         trace_particle(particles[p], srange_arr, trange_arr, zrange_arr, quadpts_arr, tmax, m, q, psi0);
     }
 
