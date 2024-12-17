@@ -36,7 +36,7 @@ typedef struct particle_t {
     double state[4];
     double derivs[6];
     double k2[6], k3[6], k4[6], k5[6], k6[6], k7[6];   
-    double x_temp[4], x_new[4], x_err[4];
+    double x_temp[4], x_err[4];
 } particle_t;
 
 __global__ void addKernel(int *c, const int* a, const int* b, int size){
@@ -373,7 +373,7 @@ __host__ __device__ void build_state(particle_t& p, int deriv_id){
             break;
         case 7:
             for (int i = 0; i < 4; i++) {
-                p.x_new[i] = p.state[i] + p.dt * (b1 * p.derivs[i] + b3 * p.k3[i] + b4 * p.k4[i] + b5 * p.k5[i] + b6 * p.k6[i]);
+                p.x_temp[i] = p.state[i] + p.dt * (b1 * p.derivs[i] + b3 * p.k3[i] + b4 * p.k4[i] + b5 * p.k5[i] + b6 * p.k6[i]);
             }
             break;
         default:
@@ -463,11 +463,10 @@ __host__ __device__   void trace_particle(particle_t& p, double* srange_arr, dou
 
         // Compute new state
 
-        for (int i = 0; i < 4; i++) {
-            p.x_new[i] = p.state[i] + p.dt * (b1 * p.derivs[i] + b3 * p.k3[i] + b4 * p.k4[i] + b5 * p.k5[i] + b6 * p.k6[i]);
-        }
+
         // Compute k7 for error estimation
-        calc_derivs(p.x_new, p.k7, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
+        build_state(p, 6);
+        calc_derivs(p.x_temp, p.k7, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
         
         // Compute  error
         // https://live.boost.org/doc/libs/1_82_0/libs/numeric/odeint/doc/html/boost_numeric_odeint/odeint_in_detail/steppers.html
@@ -504,12 +503,12 @@ __host__ __device__   void trace_particle(particle_t& p, double* srange_arr, dou
             p.t += p.dt;
             p.dt = fmin(dt_new, tmax - p.t);
 
-            p.y1 = p.x_new[0];
-            p.y2 = p.x_new[1];
-            p.z = p.x_new[2];
+            p.y1 = p.x_temp[0];
+            p.y2 = p.x_temp[1];
+            p.z = p.x_temp[2];
             // p.z = fmod(p.z, zrange_arr[1]);
             // p.z += zrange_arr[1]*(p.z < 0);
-            p.v_par = p.x_new[3];
+            p.v_par = p.x_temp[3];
         } else {
             // Reject the step and try again with smaller dt
             p.dt = dt_new;
