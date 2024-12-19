@@ -22,10 +22,7 @@ namespace py = pybind11;
 
 // Particle Data Structure
 typedef struct particle_t {
-    double y1;  // Position Y1
-    double y2;  // Position Y2
-    double z;  // Position Zeta
-    double v_par; // Velocity parallel
+    double state[4];
     double v_perp; // Velocity perpendicular
     double v_total;
     bool has_left;
@@ -33,7 +30,6 @@ typedef struct particle_t {
     double dtmax;
     double t;
     double mu;
-    double state[4];
     double derivs[42];
     // double k2[6], k3[6], k4[6], k5[6], k6[6], k7[6];   
     double x_temp[4], x_err[4];
@@ -324,10 +320,10 @@ __host__ __device__ void setup_particle(particle_t& p, double* srange_arr, doubl
                              // double mu;
     p.t = 0.0;
 
-    p.state[0] = p.y1;
-    p.state[1] = p.y2;
-    p.state[2] = p.z;
-    p.state[3] = p.v_par;
+    // p.state[0] = p.y1;
+    // p.state[1] = p.y2;
+    // p.state[2] = p.z;
+    // p.state[3] = p.v_par;
     // state[4] = p.v_perp;
 
 
@@ -447,12 +443,12 @@ __host__ __device__ void adjust_time(particle_t& p, double tmax){
         p.t += p.dt;
         p.dt = fmin(dt_new, tmax - p.t);
 
-        p.y1 = p.x_temp[0];
-        p.y2 = p.x_temp[1];
-        p.z = p.x_temp[2];
+        p.state[0] = p.x_temp[0];
+        p.state[1] = p.x_temp[1];
+        p.state[2] = p.x_temp[2];
         // p.z = fmod(p.z, zrange_arr[1]);
         // p.z += zrange_arr[1]*(p.z < 0);
-        p.v_par = p.x_temp[3];
+        p.state[3] = p.x_temp[3];
     } else {
         // Reject the step and try again with smaller dt
         p.dt = dt_new;
@@ -504,47 +500,19 @@ __host__ __device__   void trace_particle(particle_t& p, double* srange_arr, dou
         */
 
         // compute k1
-        p.state[0] = p.y1;
-        p.state[1] = p.y2;
-        p.state[2] = p.z;
-        p.state[3] = p.v_par;
+        // p.state[0] = p.y1;
+        // p.state[1] = p.y2;
+        // p.state[2] = p.z;
+        // p.state[3] = p.v_par;
 
-        
-        build_state(p, 0);
-        calc_derivs(p.x_temp, p.derivs, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
-        // std::cout << "k1 " << derivs[0] << "\t" << derivs[1] << "\t" << derivs[2] << "\t" << derivs[3] << "\n";
-        // stop if particle lost
- 
-        
-        // Compute k2
-        build_state(p, 1);
-        calc_derivs(p.x_temp, p.derivs+6, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
-        // std::cout << "k2 " << k2[0] << "\t" << k2[1] << "\t" << k2[2] << "\t" << k2[3] << "\n";
+        for(int k=0; k<7; ++k){
+            build_state(p, k);
+            calc_derivs(p.x_temp, p.derivs + 6*k, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
+        }// std::cout << "k1 " << derivs[0] << "\t" << derivs[1] << "\t" << derivs[2] << "\t" << derivs[3] << "\n";
 
-        // Compute k3
-        build_state(p, 2);
-        calc_derivs(p.x_temp, p.derivs+12, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
-        // std::cout << "k3 " << k3[0] << "\t" << k3[1] << "\t" << k3[2] << "\t" << k3[3] << "\n";
-
-        // Compute k4
-        build_state(p, 3);
-        calc_derivs(p.x_temp, p.derivs+18, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
-
-        // Compute k5
-        build_state(p, 4);
-        calc_derivs(p.x_temp, p.derivs+24, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
-
-        // Compute k6
-        build_state(p, 5);
-        calc_derivs(p.x_temp, p.derivs+30, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
-
-        // Compute k7 for error estimation
-        build_state(p, 6);
-        calc_derivs(p.x_temp, p.derivs+36, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
-        
         adjust_time(p, tmax);
 
-        double s = sqrt(p.y1*p.y1 + p.y2*p.y2);
+        double s = sqrt(p.state[0]*p.state[0] + p.state[1]*p.state[1]);
         if(s >= 1){
             // // std::cout << "particle lost: " << surface_dist << "\t" << t << "\t" << dt << "\n";
             p.has_left = true;
@@ -620,12 +588,12 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
         double theta = stz_init_arr[start+1];
         
         // convert to alternative coordinates
-        particles[i].y1 = s*cos(theta);
-        particles[i].y2 = s*sin(theta);
+        particles[i].state[0] = s*cos(theta);
+        particles[i].state[1] = s*sin(theta);
         
-        particles[i].z = stz_init_arr[start+2];
-        particles[i].v_par = vtang_arr[i];
-        particles[i].v_perp = sqrt(vtotal*vtotal -  particles[i].v_par* particles[i].v_par);
+        particles[i].state[2] = stz_init_arr[start+2];
+        particles[i].state[3] = vtang_arr[i];
+        particles[i].v_perp = sqrt(vtotal*vtotal -  vtang_arr[i]*vtang_arr[i]);
         particles[i].v_total = vtotal;
         particles[i].has_left = false;
         particles[i].t = 0;
