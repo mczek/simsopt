@@ -431,7 +431,7 @@ __host__ __device__ void adjust_time(particle_t& p, double tmax){
 
     // // std::cout << "intermediate val=" << 0.9*pow(err, -1.0/5.0) << "\n";
     double dt_new = p.dt*0.9*pow(err, -1.0/4.0);
-    if(err > 1.0)
+    // if(err > 1.0)
     dt_new = fmax(dt_new, 0.2 * p.dt);  // Limit step size reduction
     dt_new = fmin(dt_new, 5.0 * p.dt);  // Limit step size increase
     dt_new = fmin(p.dtmax, dt_new);
@@ -452,6 +452,12 @@ __host__ __device__ void adjust_time(particle_t& p, double tmax){
         // p.z = fmod(p.z, zrange_arr[1]);
         // p.z += zrange_arr[1]*(p.z < 0);
         p.state[3] = p.x_temp[3];
+
+        double s = sqrt(p.state[0]*p.state[0] + p.state[1]*p.state[1]);
+        p.has_left = s >= 1;
+
+
+
     } else {
         // Reject the step and try again with smaller dt
         p.dt = dt_new;
@@ -679,10 +685,7 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
             }
             adjust_time(particles[p], tmax);
 
-            double s = sqrt(particles[p].state[0]*particles[p].state[0] + particles[p].state[1]*particles[p].state[1]);
-            if(s >= 1){
-                particles[p].has_left = true;
-            }
+
 
         }
 
