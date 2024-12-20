@@ -405,6 +405,9 @@ __host__ __device__ void build_state(particle_t& p, int deriv_id){
 
 
 __host__ __device__ void adjust_time(particle_t& p, double tmax){
+    if(p.has_left){
+        return;
+    }
 
     const double bhat1 = 71.0 / 57600.0, bhat3 = -71.0 / 16695.0, bhat4 = 71.0 / 1920.0, bhat5 = -17253.0 / 339200.0, bhat6 = 22.0 / 525.0, bhat7 = -1.0 / 40.0;
 
@@ -542,6 +545,21 @@ __global__ void setup_particle_kernel(particle_t* particles, double* srange_arr,
     }
 }
 
+__global__ void build_state_kernel(particle_t* particles, int deriv_id, int nparticles){
+    int idx = threadIdx.x + blockIdx.x*blockDim.x;
+    if(idx < nparticles){
+        build_state(particles[idx], deriv_id);
+    }
+}
+
+__global__ void count_done_kernel(particle_t* particles, double tmax, int *total_done, int nparticles){
+    int idx = threadIdx.x + blockIdx.x*blockDim.x;
+    if(idx < nparticles){
+        int is_done = (int) (particles[idx].has_left || (particles[idx].t >= tmax));
+        atomicAdd(total_done, is_done);
+    }
+}
+
 
 extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
         py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
@@ -637,13 +655,24 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
 
     cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost);
 
-   
+    
+    int* total_done_d;
+    cudaMalloc((void**)&total_done_d, sizeof(int));
+    // cudaMemset(total_done_d, 0, sizeof(int));
+    // count_done_kernel<<<nblks, nthreads>>>(particles_d, tmax, total_done_d, nparticles);
 
-    // double dt = 1e-5*0.5*M_PI/vtotal;
-    for(int p=0; p<nparticles; ++p){
-        std::cout << "tracing particle " << p << std::endl;
+    // int total_done;
+    // cudaMemcpy(&total_done, total_done_d, sizeof(int), cudaMemcpyDeviceToHost);
+    // fmt::print("number done = {}\n", total_done);
+    int total_done = 0;
 
-        while((particles[p].t < tmax) &(!particles[p].has_left)){
+    while (total_done < nparticles){
+        fmt::print("number done = {}\n", total_done);
+         // double dt = 1e-5*0.5*M_PI/vtotal;
+
+        // advance 1 step
+        for(int p=0; p<nparticles; ++p){
+            // std::cout << "tracing particle " << p << std::endl;
             for(int k=0; k<7; ++k){
                 build_state(particles[p], k);
                 calc_derivs(particles[p].x_temp, particles[p].derivs + 6*k, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, particles[p].mu, psi0);
@@ -656,8 +685,20 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
             }
 
         }
+
+        // total_done = 0;
+        // for(int i=0; i<nparticles; ++i){
+        //     total_done += (int) (particles[i].has_left || (particles[i].t >= tmax));
+        // }
+
+        cudaMemset(total_done_d, 0, sizeof(int));
+        cudaMemcpy(particles_d, particles, nparticles * sizeof(particle_t), cudaMemcpyHostToDevice);
+        count_done_kernel<<<nblks, nthreads>>>(particles_d, tmax, total_done_d, nparticles);
+        cudaMemcpy(&total_done, total_done_d, sizeof(int), cudaMemcpyDeviceToHost);
+
     }
 
+   
     
     // particle_t* particles_d;
     // cudaMalloc((void**)&particles_d, nparticles * sizeof(particle_t));
