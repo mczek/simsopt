@@ -349,8 +349,9 @@ __host__ __device__ void build_state(particle_t& p, int deriv_id){
     // const double bhat1 = 71.0 / 57600.0, bhat3 = -71.0 / 16695.0, bhat4 = 71.0 / 1920.0, bhat5 = -17253.0 / 339200.0, bhat6 = 22.0 / 525.0, bhat7 = -1.0 / 40.0;
 
     double wgts[6] = {0}; 
-    for (int i = 0; i < 4; i++) p.x_temp[i] = p.state[i];
-
+    for (int i = 0; i < 4; i++) {
+        p.x_temp[i] = p.state[i];
+    }
     switch(deriv_id){
         case 0:
             // wgts = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
@@ -397,7 +398,7 @@ __host__ __device__ void build_state(particle_t& p, int deriv_id){
             break;
     }
 
-    for (int j=0; j<=6; ++j){
+    for (int j=0; j<6; ++j){
         for(int i=0; i<4; ++i){
             p.x_temp[i] += p.dt * wgts[j] * p.derivs[6*j+i];
         }
@@ -688,20 +689,24 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
         for(int i=0; i<BATCH_SIZE; ++i){
             // advance 1 step
             for(int k=0; k<7; ++k){
-                // cudaMemcpy(particles_d, particles, nparticles * sizeof(particle_t), cudaMemcpyHostToDevice);
-                // build_state_kernel<<<nblks, nthreads>>>(particles_d, k, nparticles);
-                // cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost);
+                cudaMemcpy(particles_d, particles, nparticles * sizeof(particle_t), cudaMemcpyHostToDevice);
+                build_state_kernel<<<nblks, nthreads>>>(particles_d, k, nparticles); 
+                cudaDeviceSynchronize();
+                cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost);
                 for(int p=0; p<nparticles; ++p){
                 // std::cout << "tracing particle " << p << std::endl;
  
-                    build_state(particles[p], k);
+                    // build_state(particles[p], k);
                     calc_derivs(particles[p].x_temp, particles[p].derivs + 6*k, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, particles[p].mu, psi0);
                 }
                 // adjust_time(particles[p], tmax);
 
 
 
+
             }
+
+
 
             cudaMemcpy(particles_d, particles, nparticles * sizeof(particle_t), cudaMemcpyHostToDevice);
             adjust_time_kernel<<<nblks, nthreads>>>(particles_d, tmax, nparticles);
