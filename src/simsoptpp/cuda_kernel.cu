@@ -20,6 +20,8 @@ namespace py = pybind11;
 
 // #define dt 1e-7
 
+#define BATCH_SIZE 1000
+
 // Particle Data Structure
 typedef struct particle_t {
     double state[4];
@@ -683,22 +685,28 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
         fmt::print("number done = {}\n", total_done);
          // double dt = 1e-5*0.5*M_PI/vtotal;
 
-        // advance 1 step
-        for(int p=0; p<nparticles; ++p){
-            // std::cout << "tracing particle " << p << std::endl;
+        for(int i=0; i<BATCH_SIZE; ++i){
+            // advance 1 step
             for(int k=0; k<7; ++k){
-                build_state(particles[p], k);
-                calc_derivs(particles[p].x_temp, particles[p].derivs + 6*k, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, particles[p].mu, psi0);
+                // cudaMemcpy(particles_d, particles, nparticles * sizeof(particle_t), cudaMemcpyHostToDevice);
+                // build_state_kernel<<<nblks, nthreads>>>(particles_d, k, nparticles);
+                // cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost);
+                for(int p=0; p<nparticles; ++p){
+                // std::cout << "tracing particle " << p << std::endl;
+ 
+                    build_state(particles[p], k);
+                    calc_derivs(particles[p].x_temp, particles[p].derivs + 6*k, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, particles[p].mu, psi0);
+                }
+                // adjust_time(particles[p], tmax);
+
+
+
             }
-            // adjust_time(particles[p], tmax);
 
-
-
+            cudaMemcpy(particles_d, particles, nparticles * sizeof(particle_t), cudaMemcpyHostToDevice);
+            adjust_time_kernel<<<nblks, nthreads>>>(particles_d, tmax, nparticles);
+            cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost);
         }
-
-        cudaMemcpy(particles_d, particles, nparticles * sizeof(particle_t), cudaMemcpyHostToDevice);
-        adjust_time_kernel<<<nblks, nthreads>>>(particles_d, tmax, nparticles);
-        cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost);
 
         // total_done = 0;
         // for(int i=0; i<nparticles; ++i){
