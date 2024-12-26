@@ -561,6 +561,15 @@ __global__ void build_state_kernel(particle_t* particles, int deriv_id, int npar
     }
 }
 
+ 
+__global__ void calc_derivs_kernel(particle_t* particles, int deriv_id, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr, double m, double q, double psi0, int nparticles){
+    int idx = threadIdx.x + blockIdx.x*blockDim.x;
+    if(idx < nparticles){
+        calc_derivs(particles[idx].x_temp, particles[idx].derivs + 6*deriv_id, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, particles[idx].mu, psi0);
+    }
+}
+
+
 __global__ void count_done_kernel(particle_t* particles, double tmax, int *total_done, int nparticles){
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
     if(idx < nparticles){
@@ -693,12 +702,18 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
                 build_state_kernel<<<nblks, nthreads>>>(particles_d, k, nparticles); 
                 cudaDeviceSynchronize();
                 cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost);
-                for(int p=0; p<nparticles; ++p){
-                // std::cout << "tracing particle " << p << std::endl;
+
+
+                cudaMemcpy(particles_d, particles, nparticles * sizeof(particle_t), cudaMemcpyHostToDevice);
+                calc_derivs_kernel<<<nblks, nthreads>>>(particles_d, k, srange_d, trange_d, zrange_d, quadpts_d, m, q, psi0, nparticles); 
+                cudaDeviceSynchronize();
+                cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost);
+                // for(int p=0; p<nparticles; ++p){
+                // // std::cout << "tracing particle " << p << std::endl;
  
-                    // build_state(particles[p], k);
-                    calc_derivs(particles[p].x_temp, particles[p].derivs + 6*k, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, particles[p].mu, psi0);
-                }
+                //     // build_state(particles[p], k);
+                //     calc_derivs(particles[p].x_temp, particles[p].derivs + 6*k, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, particles[p].mu, psi0);
+                // }
                 // adjust_time(particles[p], tmax);
 
 
