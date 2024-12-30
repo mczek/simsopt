@@ -89,147 +89,149 @@ __host__ __device__ void shape(double x, double* shape){
 //     return;         
 // }
 
-__host__ __device__ __forceinline__ void interpolate(double* loc, double* data, double* out, double* srange_arr, double* trange_arr, double* zrange_arr, int n){
-    int ns = srange_arr[2];
-    int nt = trange_arr[2];
-    int nz = zrange_arr[2];
+__device__ __forceinline__ void interpolate(double* loc, double* data, double* out, double* srange_arr, double* trange_arr, double* zrange_arr, int n){
+    if(threadIdx.x == 0){
+        int ns = srange_arr[2];
+        int nt = trange_arr[2];
+        int nz = zrange_arr[2];
 
-    // Need to interpolate modB, modB derivs, G, and iota
+        // Need to interpolate modB, modB derivs, G, and iota
 
-    // arrays to hold weights for interpolation    
-    double s_shape[4];
-    double t_shape[4];
-    double z_shape[4];
+        // arrays to hold weights for interpolation    
+        double s_shape[4];
+        double t_shape[4];
+        double z_shape[4];
 
-    /*
-    * index into the grid and calculate weights
-    */ 
-    double s_grid_size = (srange_arr[1]-srange_arr[0]) / (srange_arr[2]-1);
-    double theta_grid_size = (trange_arr[1]-trange_arr[0]) / (trange_arr[2]-1);
-    double zeta_grid_size = (zrange_arr[1]-zrange_arr[0]) / (zrange_arr[2]-1);
+        /*
+        * index into the grid and calculate weights
+        */ 
+        double s_grid_size = (srange_arr[1]-srange_arr[0]) / (srange_arr[2]-1);
+        double theta_grid_size = (trange_arr[1]-trange_arr[0]) / (trange_arr[2]-1);
+        double zeta_grid_size = (zrange_arr[1]-zrange_arr[0]) / (zrange_arr[2]-1);
 
-    // fmt::print("s grid values:\n");
-    // for(int ii=0; ii<ns; ++ii){
-    //     fmt::print("{} {}\n", ii, ii*s_grid_size);
-    // }
+        // fmt::print("s grid values:\n");
+        // for(int ii=0; ii<ns; ++ii){
+        //     fmt::print("{} {}\n", ii, ii*s_grid_size);
+        // }
+        
+        // fmt::print("t grid values:\n");
+        // for(int ii=0; ii<nt; ++ii){
+        //     fmt::print("{} {}\n", ii, ii*theta_grid_size);
+        // }
+
+        // fmt::print("z grid values:\n");
+        // for(int ii=0; ii<nz; ++ii){
+        //     fmt::print("{} {}\n", ii, ii*zeta_grid_size);
+        // }
+        // Get Boozer coordinates of current position
+        double s = loc[0];
+        double t = loc[1];
+        double z = loc[2];
+
+
+
+        // fmt::print("new interpolation s,t,z={} {} {}\n", s, t, z);
+
+        
+
+
+        // index into mesh to obtain nearby points
+        // get correct "meta grid" for continuity
+        // keeping stz order
+
+        // starting change
+
+        // int i = (int) s / s_grid_size;
+        // int j = (int) t / theta_grid_size;
+        // int k = (int) z / zeta_grid_size;
+
+
+        int i = 3*((int) ((s - srange_arr[0]) / s_grid_size) / 3);
+        int j = 3*((int) ((t - trange_arr[0]) / theta_grid_size) / 3);
+        int k = 3*((int) ((z - zrange_arr[0]) / zeta_grid_size) / 3);
+
+
+        i = min(i, (int)srange_arr[2]-4);
+        j = min(j, (int)trange_arr[2]-4);
+        k = min(k, (int)zrange_arr[2]-4);
+
+        // fmt::print("i={}, j={}, k={}\n", i, j,k);
+        // // use nearest grid pts when s>1
+        // if(i >= ns){
+        //     std::cout << "s=" << s << std::endl;
+        // }
+        // i = min(ns-1, i);
+
+
+        // std::cout << "i,j,k=" << i << "\t" << j << "\t" << k << "\n";
+
+        // normalized positions in local grid wrt e.g. r at index i
+        // maps the position to [0,3] in the "meta grid"
+
+        double s_rel = (s -  i*s_grid_size - srange_arr[0]) / s_grid_size;
+        double theta_rel = (t -  j*theta_grid_size - trange_arr[0]) / theta_grid_size;
+        double zeta_rel = (z - k*zeta_grid_size - zrange_arr[0]) / zeta_grid_size;
+
+        // fmt::print("s_rel,t_rel,z_rel={} {} {}\n", s_rel, theta_rel, zeta_rel);
+        // std::cout << "s_rel,theta_rel,zeta_rel=" << s_rel << "\t" << theta_rel << "\t" << zeta_rel << std::endl;
+
+        // fill shape vectors
+        // this isn't particularly efficient
+        shape(s_rel, s_shape);
+        shape(theta_rel, t_shape);
+        shape(zeta_rel, z_shape);
+
+        /*
+        From here it remains to perform the necessary interpolations
+        As opposed to Cartesian coordinates, we don't need to monitor the surface dist via interpolation
+        We also don't need to calculate the derivative of any of the interpolations
+        This lets us interpolate everything in one set of nested loops 
+        */
+
+
     
-    // fmt::print("t grid values:\n");
-    // for(int ii=0; ii<nt; ++ii){
-    //     fmt::print("{} {}\n", ii, ii*theta_grid_size);
-    // }
-
-    // fmt::print("z grid values:\n");
-    // for(int ii=0; ii<nz; ++ii){
-    //     fmt::print("{} {}\n", ii, ii*zeta_grid_size);
-    // }
-    // Get Boozer coordinates of current position
-    double s = loc[0];
-    double t = loc[1];
-    double z = loc[2];
 
 
+        // store interpolants in a common array, indexed the same as the columns of the quad info
+        // modB, derivs of modB, G, iota
+        // double interpolants[6] = {0};
 
-    // fmt::print("new interpolation s,t,z={} {} {}\n", s, t, z);
+        // std::cout << "interpolating" << std::endl;
 
-    
-
-
-    // index into mesh to obtain nearby points
-    // get correct "meta grid" for continuity
-    // keeping stz order
-
-    // starting change
-
-    // int i = (int) s / s_grid_size;
-    // int j = (int) t / theta_grid_size;
-    // int k = (int) z / zeta_grid_size;
-
-
-    int i = 3*((int) ((s - srange_arr[0]) / s_grid_size) / 3);
-    int j = 3*((int) ((t - trange_arr[0]) / theta_grid_size) / 3);
-    int k = 3*((int) ((z - zrange_arr[0]) / zeta_grid_size) / 3);
-
-
-    i = min(i, (int)srange_arr[2]-4);
-    j = min(j, (int)trange_arr[2]-4);
-    k = min(k, (int)zrange_arr[2]-4);
-
-    // fmt::print("i={}, j={}, k={}\n", i, j,k);
-    // // use nearest grid pts when s>1
-    // if(i >= ns){
-    //     std::cout << "s=" << s << std::endl;
-    // }
-    // i = min(ns-1, i);
-
-
-    // std::cout << "i,j,k=" << i << "\t" << j << "\t" << k << "\n";
-
-    // normalized positions in local grid wrt e.g. r at index i
-    // maps the position to [0,3] in the "meta grid"
-
-    double s_rel = (s -  i*s_grid_size - srange_arr[0]) / s_grid_size;
-    double theta_rel = (t -  j*theta_grid_size - trange_arr[0]) / theta_grid_size;
-    double zeta_rel = (z - k*zeta_grid_size - zrange_arr[0]) / zeta_grid_size;
-
-    // fmt::print("s_rel,t_rel,z_rel={} {} {}\n", s_rel, theta_rel, zeta_rel);
-    // std::cout << "s_rel,theta_rel,zeta_rel=" << s_rel << "\t" << theta_rel << "\t" << zeta_rel << std::endl;
-
-    // fill shape vectors
-    // this isn't particularly efficient
-    shape(s_rel, s_shape);
-    shape(theta_rel, t_shape);
-    shape(zeta_rel, z_shape);
-
-    /*
-    From here it remains to perform the necessary interpolations
-    As opposed to Cartesian coordinates, we don't need to monitor the surface dist via interpolation
-    We also don't need to calculate the derivative of any of the interpolations
-    This lets us interpolate everything in one set of nested loops 
-    */
-
-
- 
-
-
-    // store interpolants in a common array, indexed the same as the columns of the quad info
-    // modB, derivs of modB, G, iota
-    // double interpolants[6] = {0};
-
-    // std::cout << "interpolating" << std::endl;
-
-    // // quad pts are indexed s t z
-    for(int ii=0; ii<=3; ++ii){ // s grid
-        if((i+ii) < ns){
-            for(int jj=0; jj<=3; ++jj){ // theta grid           
-                int wrap_j = (j+jj) % nt;
-                for(int kk=0; kk<=3; ++kk){ // zeta grid
-                    int wrap_k = (k+kk) % nz;
-                    int row_idx = (i+ii)*nt*nz + wrap_j*nz + wrap_k;
-                    
-                    double shape_val = s_shape[ii]*t_shape[jj]*z_shape[kk];
-                    // std::cout << row_idx << " modB interpolant: " << data[n*row_idx] << std::endl;
-
-                    // fmt::print("modB val={}, s_shape={}, t_shape={}, z_shape={}\n", data[n*row_idx], s_shape[ii], t_shape[jj], z_shape[kk]);
-                    for(int zz=0; zz<n; ++zz){
-                        // // std::cout << "accessing elt " << 6*row_idx + zz << "\n";
-                        out[zz] += data[n*row_idx + zz]*shape_val;
-                        // if(zz == 0){
-                        //     // std::cout << quadpts_arr[6*row_idx + zz] << "\n";
-                        // }
+        // // quad pts are indexed s t z
+        for(int ii=0; ii<=3; ++ii){ // s grid
+            if((i+ii) < ns){
+                for(int jj=0; jj<=3; ++jj){ // theta grid           
+                    int wrap_j = (j+jj) % nt;
+                    for(int kk=0; kk<=3; ++kk){ // zeta grid
+                        int wrap_k = (k+kk) % nz;
+                        int row_idx = (i+ii)*nt*nz + wrap_j*nz + wrap_k;
                         
-                    }
-                    // std::cout << "running modB interpolant: " << interpolants[0] << std::endl;
+                        double shape_val = s_shape[ii]*t_shape[jj]*z_shape[kk];
+                        // std::cout << row_idx << " modB interpolant: " << data[n*row_idx] << std::endl;
 
+                        // fmt::print("modB val={}, s_shape={}, t_shape={}, z_shape={}\n", data[n*row_idx], s_shape[ii], t_shape[jj], z_shape[kk]);
+                        for(int zz=0; zz<n; ++zz){
+                            // // std::cout << "accessing elt " << 6*row_idx + zz << "\n";
+                            out[zz] += data[n*row_idx + zz]*shape_val;
+                            // if(zz == 0){
+                            //     // std::cout << quadpts_arr[6*row_idx + zz] << "\n";
+                            // }
+                            
+                        }
+                        // std::cout << "running modB interpolant: " << interpolants[0] << std::endl;
+
+                    }
                 }
             }
+
         }
 
+        // for(int ii=0; ii<n; ++ii){
+        //     fmt::print("{}\t", out[ii]);
+        // }
+        // std::cout << "\n";
     }
-
-    // for(int ii=0; ii<n; ++ii){
-    //     fmt::print("{}\t", out[ii]);
-    // }
-    // std::cout << "\n";
 
 }
 
@@ -247,14 +249,20 @@ __device__ void calc_derivs(double* state, double* out, double* srange_arr, doub
 
     */
 
-   if (threadIdx.x == 0) {
-        double interpolants[6] = {0};
-        double loc[3];
+   __shared__ double interpolants[6];
+   __shared__ double loc[3];
+   __shared__ double s, theta, z, v_par, t, period;
+   __shared__ bool symmetry_exploited;
 
-        double s = sqrt(state[0]*state[0] + state[1]*state[1]);
-        double theta = atan2(state[1], state[0]);
-        double z = state[2];
-        double v_par = state[3];
+   if (threadIdx.x == 0) {
+        for(int i=0; i<6; ++i){
+            interpolants[i] = 0.0;
+        }
+
+        s = sqrt(state[0]*state[0] + state[1]*state[1]);
+        theta = atan2(state[1], state[0]);
+        z = state[2];
+        v_par = state[3];
 
         // fmt::print("s={}, theta={}, zeta={}, v_par={}\n", s, theta, z, v_par);
 
@@ -263,17 +271,17 @@ __device__ void calc_derivs(double* state, double* out, double* srange_arr, doub
         // exploit potential symmetry
         
         // we want to exploit periodicity in the B-field, but leave sine(theta) unchanged
-        double t = fmod(theta, 2*M_PI);
+        t = fmod(theta, 2*M_PI);
         t += 2*M_PI*(t < 0);
 
         // we can modify z because it's only used to access the B-field location
-        double period = zrange_arr[1];
+        period = zrange_arr[1];
         z = fmod(z, period);
         z += period*(z < 0);
 
         
         // exploit stellarator symmetry
-        bool symmetry_exploited = t > M_PI;
+        symmetry_exploited = t > M_PI;
         if(symmetry_exploited){
             z = period - z;
             t = 2*M_PI - t;
@@ -286,10 +294,13 @@ __device__ void calc_derivs(double* state, double* out, double* srange_arr, doub
         loc[2] = z;
 
         // fmt::print("values for interpolation: s={}, t={}, z={}\n", s, t, z);
+    }
 
+    __syncthreads();
+    interpolate(loc, quadpts_arr, interpolants, srange_arr, trange_arr, zrange_arr, 6);
+    __syncthreads();
 
-        interpolate(loc, quadpts_arr, interpolants, srange_arr, trange_arr, zrange_arr, 6);
-
+    if (threadIdx.x == 0) {
         if(symmetry_exploited){
             interpolants[2] *= -1.0;
             interpolants[3] *= -1.0;
@@ -324,7 +335,7 @@ __device__ void setup_particle(particle_t& p, double* srange_arr, double* trange
                              // double mu;
     if(threadIdx.x == 0){
         p.t = 0.0;
-
+    }
         // p.state[0] = p.y1;
         // p.state[1] = p.y2;
         // p.state[2] = p.z;
@@ -334,7 +345,11 @@ __device__ void setup_particle(particle_t& p, double* srange_arr, double* trange
 
         // dummy call to get norm B
         // std::cout << "dummy call to calc_derivs \n";
-        calc_derivs(p.state, p.derivs, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, -1, psi0);
+    __syncthreads();
+    calc_derivs(p.state, p.derivs, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, -1, psi0);
+    __syncthreads();
+
+    if(threadIdx.x == 0){
         p.mu = p.v_perp*p.v_perp/(2*p.derivs[4]);
 
         // dtmax = 0.5*M_PI*G / (modB*vtotal)
@@ -594,19 +609,11 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
         py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
         double tmax, double tol, double psi0, int nparticles){
 
-    // vector<vector<array<double, 5>>> res_all(nparticles);
-    // vector<vector<array<double, 6>>> res_phi_hits_all(nparticles);
-
-    // std::cout << "calling gpu tracing\n";
-
     //  read data in from python
     auto ptr = stz_init.data();
     int size = stz_init.size();
     double stz_init_arr[size];
     std::memcpy(stz_init_arr, ptr, size * sizeof(double));
-
-    // py::buffer_info xyz_buf = xyz_init.request();
-    // double* xyz_init_arr = static_cast<double*>(xyz_buf.ptr);
     
     py::buffer_info vtang_buf = vtang.request();
     double* vtang_arr = static_cast<double*>(vtang_buf.ptr);
@@ -632,8 +639,6 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
     * y1 = s*cos(theta)
     * y2 = s*sin(theta)
     */
-
-    // std::cout << "loading particles" << "\n";
 
     // load initial conditions
     for(int i=0; i<nparticles; ++i){
@@ -682,23 +687,12 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
 
     setup_particle_kernel<<<nparticles, 384>>>(particles_d, srange_d, trange_d, zrange_d, quadpts_d, tmax, m, q, psi0, nparticles);
 
-    // cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost);
-
-    
     int* total_done_d;
     cudaMalloc((void**)&total_done_d, sizeof(int));
-    // cudaMemset(total_done_d, 0, sizeof(int));
-    // count_done_kernel<<<nblks, nthreads>>>(particles_d, tmax, total_done_d, nparticles);
-
-    // int total_done;
-    // cudaMemcpy(&total_done, total_done_d, sizeof(int), cudaMemcpyDeviceToHost);
-    // fmt::print("number done = {}\n", total_done);
     int total_done = 0;
 
     while (total_done < nparticles){
         fmt::print("number done = {}\n", total_done);
-         // double dt = 1e-5*0.5*M_PI/vtotal;
-
         for(int i=0; i<BATCH_SIZE; ++i){
             // advance 1 step
             for(int k=0; k<7; ++k){
@@ -709,43 +703,14 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
             adjust_time_kernel<<<nblks, nthreads>>>(particles_d, tmax, nparticles);
         }
 
-
         cudaMemset(total_done_d, 0, sizeof(int));
         count_done_kernel<<<nblks, nthreads>>>(particles_d, tmax, total_done_d, nparticles);
         cudaMemcpy(&total_done, total_done_d, sizeof(int), cudaMemcpyDeviceToHost);
-
-
 
     }
 
    
     
-    // particle_t* particles_d;
-    // cudaMalloc((void**)&particles_d, nparticles * sizeof(particle_t));
-    // cudaMemcpy(particles_d, particles, nparticles * sizeof(particle_t), cudaMemcpyHostToDevice);
-
-    // double* srange_d;
-    // cudaMalloc((void**)&srange_d, 3 * sizeof(double));
-    // cudaMemcpy(srange_d, srange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
-
-    // double* zrange_d;
-    // cudaMalloc((void**)&zrange_d, 3 * sizeof(double));
-    // cudaMemcpy(zrange_d, zrange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
-
-    // double* trange_d;
-    // cudaMalloc((void**)&trange_d, 3 * sizeof(double));
-    // cudaMemcpy(trange_d, trange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
-
-
-    // double* quadpts_d;
-    // cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(double));
-    // cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(double), cudaMemcpyHostToDevice);
-
-    // int nthreads = 256;
-    // int nblks = nparticles / nthreads + 1;
-    // std::cout << "starting particle tracing kernel\n";
-    // particle_trace_kernel<<<nblks, nthreads>>>(particles_d, srange_d, trange_d, zrange_d, quadpts_d, tmax, m, q, psi0, nparticles);
-
     cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost);
 
     
@@ -801,7 +766,7 @@ extern "C" py::array_t<double> test_interpolation(py::array_t<double> quad_pts, 
     loc_arr[1] = t;
     loc_arr[2] = z;
 
-    interpolate(loc_arr, quadpts_arr, out, srange_arr, trange_arr, zrange_arr, n);
+    // interpolate(loc_arr, quadpts_arr, out, srange_arr, trange_arr, zrange_arr, n);
 
 
     if(symmetry_exploited){
