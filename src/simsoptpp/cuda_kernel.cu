@@ -90,7 +90,7 @@ __host__ __device__ void shape(double x, double* shape){
 // }
 
 __device__ __forceinline__ void interpolate(double* loc, double* data, double* out, double* srange_arr, double* trange_arr, double* zrange_arr, int n){
-    if(threadIdx.x == 0){
+    if(threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0){
         int ns = srange_arr[2];
         int nt = trange_arr[2];
         int nz = zrange_arr[2];
@@ -254,7 +254,7 @@ __device__ void calc_derivs(double* state, double* out, double* srange_arr, doub
    __shared__ double s, theta, z, v_par, t, period;
    __shared__ bool symmetry_exploited;
 
-   if (threadIdx.x == 0) {
+   if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
         for(int i=0; i<6; ++i){
             interpolants[i] = 0.0;
         }
@@ -300,7 +300,7 @@ __device__ void calc_derivs(double* state, double* out, double* srange_arr, doub
     interpolate(loc, quadpts_arr, interpolants, srange_arr, trange_arr, zrange_arr, 6);
     __syncthreads();
 
-    if (threadIdx.x == 0) {
+    if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
         if(symmetry_exploited){
             interpolants[2] *= -1.0;
             interpolants[3] *= -1.0;
@@ -333,7 +333,7 @@ __device__ void calc_derivs(double* state, double* out, double* srange_arr, doub
 __device__ void setup_particle(particle_t& p, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr,
                          double tmax, double m, double q, double psi0){
                              // double mu;
-    if(threadIdx.x == 0){
+    if(threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0){
         p.t = 0.0;
     }
         // p.state[0] = p.y1;
@@ -349,7 +349,7 @@ __device__ void setup_particle(particle_t& p, double* srange_arr, double* trange
     calc_derivs(p.state, p.derivs, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, -1, psi0);
     __syncthreads();
 
-    if(threadIdx.x == 0){
+    if(threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0){
         p.mu = p.v_perp*p.v_perp/(2*p.derivs[4]);
 
         // dtmax = 0.5*M_PI*G / (modB*vtotal)
@@ -685,11 +685,14 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
     cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(double));
     cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(double), cudaMemcpyHostToDevice);
 
-    setup_particle_kernel<<<nparticles, 384>>>(particles_d, srange_d, trange_d, zrange_d, quadpts_d, tmax, m, q, psi0, nparticles);
+    dim3 interpolation_grid(4,4,24);
+    setup_particle_kernel<<<nparticles, interpolation_grid>>>(particles_d, srange_d, trange_d, zrange_d, quadpts_d, tmax, m, q, psi0, nparticles);
 
     int* total_done_d;
     cudaMalloc((void**)&total_done_d, sizeof(int));
     int total_done = 0;
+
+
 
     while (total_done < nparticles){
         fmt::print("number done = {}\n", total_done);
@@ -697,7 +700,7 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
             // advance 1 step
             for(int k=0; k<7; ++k){
                 build_state_kernel<<<nblks, nthreads>>>(particles_d, k, nparticles); 
-                calc_derivs_kernel<<<nparticles, 384>>>(particles_d, k, srange_d, trange_d, zrange_d, quadpts_d, m, q, psi0, nparticles); 
+                calc_derivs_kernel<<<nparticles, interpolation_grid>>>(particles_d, k, srange_d, trange_d, zrange_d, quadpts_d, m, q, psi0, nparticles); 
 
             }
             adjust_time_kernel<<<nblks, nthreads>>>(particles_d, tmax, nparticles);
