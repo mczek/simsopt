@@ -91,6 +91,10 @@ __host__ __device__ void shape(double x, double* shape){
 
 __device__ __forceinline__ void interpolate(double* loc, double* data, double* out, double* srange_arr, double* trange_arr, double* zrange_arr, int n){
     
+    // store elements to be summed in shared memory
+
+    
+    
     int ii = threadIdx.x;
     int jj = threadIdx.y;
     int kk = threadIdx.z / 6;
@@ -204,11 +208,32 @@ __device__ __forceinline__ void interpolate(double* loc, double* data, double* o
     // std::cout << "interpolating" << std::endl;
 
     // // quad pts are indexed s t z
+    __shared__ double interpolant_elts[384];
+    int thread_idx = 96*threadIdx.x + 24*threadIdx.y + threadIdx.z;
+
     int wrap_j = (j+jj) % nt;
     int wrap_k = (k+kk) % nz;
     int row_idx = (i+ii)*nt*nz + wrap_j*nz + wrap_k;
     double shape_val = s_shape[ii]*t_shape[jj]*z_shape[kk];
-    atomicAdd(out+zz, data[n*row_idx + zz]*shape_val);
+
+    interpolant_elts[thread_idx] = data[n*row_idx + zz]*shape_val;
+    __syncthreads();
+
+    // now perform a block reduction 
+    int size = 192;
+    while(size >= 6){
+        if(thread_idx < size){
+            interpolant_elts[thread_idx] += interpolant_elts[thread_idx + size];
+        }
+        size /= 2;
+        __syncthreads();
+    }
+
+    if(thread_idx < 6){
+        out[thread_idx] = interpolant_elts[thread_idx];
+    }
+
+    // atomicAdd(out+zz, );
     // for(int ii=0; ii<=3; ++ii){ // s grid
     //     if((i+ii) < ns){
     //         for(int jj=0; jj<=3; ++jj){ // theta grid           
@@ -246,7 +271,7 @@ __device__ __forceinline__ void interpolate(double* loc, double* data, double* o
 }
 
 // out contains derivatives for x , y, z, v_par, and then norm of B and surface distance interpolation
-__device__ void calc_derivs(double* state, double* out, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr, double m, double q, double mu, double psi0){
+__device__ void calc_derivs(double* state, double* out, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr, double m, double q, double mu, double psi0, double tmax){
     /*
     * Returns     
     out[0] = ds/dtime
@@ -258,6 +283,7 @@ __device__ void calc_derivs(double* state, double* out, double* srange_arr, doub
     
 
     */
+
 
    __shared__ double interpolants[6];
    __shared__ double loc[3];
@@ -356,7 +382,7 @@ __device__ void setup_particle(particle_t& p, double* srange_arr, double* trange
         // dummy call to get norm B
         // std::cout << "dummy call to calc_derivs \n";
     __syncthreads();
-    calc_derivs(p.state, p.derivs, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, -1, psi0);
+    calc_derivs(p.state, p.derivs, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, -1, psi0, tmax);
     __syncthreads();
 
     if(threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0){
@@ -369,8 +395,10 @@ __device__ void setup_particle(particle_t& p, double* srange_arr, double* trange
 
 }
 
-__host__ __device__ void build_state(particle_t& p, int deriv_id){
-   
+__host__ __device__ void build_state(particle_t& p, int deriv_id, double tmax){
+    if(p.has_left || p.t >= tmax){
+        return;
+    }
 
     // const double a61 = 9017.0 / 3168.0, a62 = -355.0 / 33.0, a63 = 46732.0 / 5247.0, a64 = 49.0 / 176.0, a65 = -5103.0 / 18656.0;
     const double b1 = 35.0 / 384.0, b3 = 500.0 / 1113.0, b4 = 125.0 / 192.0, b5 = -2187.0 / 6784.0, b6 = 11.0 / 84.0;
@@ -437,7 +465,7 @@ __host__ __device__ void build_state(particle_t& p, int deriv_id){
 
 
 __host__ __device__ void adjust_time(particle_t& p, double tmax){
-    if(p.has_left){
+    if(p.has_left || p.t >= tmax){
         return;
     }
 
@@ -547,8 +575,8 @@ __device__   void trace_particle(particle_t& p, double* srange_arr, double* tran
         // p.state[3] = p.v_par;
 
         for(int k=0; k<7; ++k){
-            build_state(p, k);
-            calc_derivs(p.x_temp, p.derivs + 6*k, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
+            build_state(p, k, tmax);
+            calc_derivs(p.x_temp, p.derivs + 6*k, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0, tmax);
         }// std::cout << "k1 " << derivs[0] << "\t" << derivs[1] << "\t" << derivs[2] << "\t" << derivs[3] << "\n";
 
         adjust_time(p, tmax);
@@ -583,18 +611,21 @@ __global__ void setup_particle_kernel(particle_t* particles, double* srange_arr,
     }
 }
 
-__global__ void build_state_kernel(particle_t* particles, int deriv_id, int nparticles){
+__global__ void build_state_kernel(particle_t* particles, int deriv_id, double tmax, int nparticles){
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
     if(idx < nparticles){
-        build_state(particles[idx], deriv_id);
+        build_state(particles[idx], deriv_id, tmax);
     }
 }
 
  
-__global__ void calc_derivs_kernel(particle_t* particles, int deriv_id, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr, double m, double q, double psi0, int nparticles){
+__global__ void calc_derivs_kernel(particle_t* particles, int deriv_id, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr, double m, double q, double psi0, double tmax, int nparticles){
     int idx = blockIdx.x;
     if(idx < nparticles){
-        calc_derivs(particles[idx].x_temp, particles[idx].derivs + 6*deriv_id, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, particles[idx].mu, psi0);
+        if(particles[idx].has_left || particles[idx].t >= tmax){
+            return;
+        }
+        calc_derivs(particles[idx].x_temp, particles[idx].derivs + 6*deriv_id, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, particles[idx].mu, psi0, tmax);
     }
 }
 
@@ -709,8 +740,8 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
         for(int i=0; i<BATCH_SIZE; ++i){
             // advance 1 step
             for(int k=0; k<7; ++k){
-                build_state_kernel<<<nblks, nthreads>>>(particles_d, k, nparticles); 
-                calc_derivs_kernel<<<nparticles, interpolation_grid>>>(particles_d, k, srange_d, trange_d, zrange_d, quadpts_d, m, q, psi0, nparticles); 
+                build_state_kernel<<<nblks, nthreads>>>(particles_d, k, tmax, nparticles); 
+                calc_derivs_kernel<<<nparticles, interpolation_grid>>>(particles_d, k, srange_d, trange_d, zrange_d, quadpts_d, m, q, psi0, tmax, nparticles); 
 
             }
             adjust_time_kernel<<<nblks, nthreads>>>(particles_d, tmax, nparticles);
