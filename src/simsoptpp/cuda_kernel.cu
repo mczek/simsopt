@@ -783,6 +783,177 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
 }
 
 
+ __device__ __forceinline__ void gpu_interpolate(double* loc, double* data, double* out, double* srange_arr, double* trange_arr, double* zrange_arr, int n){
+    int ns = srange_arr[2];
+    int nt = trange_arr[2];
+    int nz = zrange_arr[2];
+
+    // Need to interpolate modB, modB derivs, G, and iota
+
+    // arrays to hold weights for interpolation    
+    double s_shape[4];
+    double t_shape[4];
+    double z_shape[4];
+
+    /*
+    * index into the grid and calculate weights
+    */ 
+    double s_grid_size = (srange_arr[1]-srange_arr[0]) / (srange_arr[2]-1);
+    double theta_grid_size = (trange_arr[1]-trange_arr[0]) / (trange_arr[2]-1);
+    double zeta_grid_size = (zrange_arr[1]-zrange_arr[0]) / (zrange_arr[2]-1);
+
+    // Get Boozer coordinates of current position
+    double s = loc[0];
+    double t = loc[1];
+    double z = loc[2];
+
+    // index into mesh to obtain nearby points
+    // get correct "meta grid" for continuity
+    // keeping stz order
+
+    int i = 3*((int) ((s - srange_arr[0]) / s_grid_size) / 3);
+    int j = 3*((int) ((t - trange_arr[0]) / theta_grid_size) / 3);
+    int k = 3*((int) ((z - zrange_arr[0]) / zeta_grid_size) / 3);
+
+
+    i = min(i, (int)srange_arr[2]-4);
+    j = min(j, (int)trange_arr[2]-4);
+    k = min(k, (int)zrange_arr[2]-4);
+
+    // normalized positions in local grid wrt e.g. r at index i
+    // maps the position to [0,3] in the "meta grid"
+
+    double s_rel = (s -  i*s_grid_size - srange_arr[0]) / s_grid_size;
+    double theta_rel = (t -  j*theta_grid_size - trange_arr[0]) / theta_grid_size;
+    double zeta_rel = (z - k*zeta_grid_size - zrange_arr[0]) / zeta_grid_size;
+
+    // fill shape vectors
+    // this isn't particularly efficient
+    shape(s_rel, s_shape);
+    shape(theta_rel, t_shape);
+    shape(zeta_rel, z_shape);
+
+    /*
+    From here it remains to perform the necessary interpolations
+    As opposed to Cartesian coordinates, we don't need to monitor the surface dist via interpolation
+    We also don't need to calculate the derivative of any of the interpolations
+    This lets us interpolate everything in one set of nested loops 
+    */
+
+    // store interpolants in a common array, indexed the same as the columns of the quad info
+    // modB, derivs of modB, G, iota
+
+    // // quad pts are indexed s t z
+    for(int ii=0; ii<=3; ++ii){ // s grid
+        if((i+ii) < ns){
+            for(int jj=0; jj<=3; ++jj){ // theta grid           
+                int wrap_j = (j+jj) % nt;
+                for(int kk=0; kk<=3; ++kk){ // zeta grid
+                    int wrap_k = (k+kk) % nz;
+                    int row_idx = (i+ii)*nt*nz + wrap_j*nz + wrap_k;
+                    
+                    double shape_val = s_shape[ii]*t_shape[jj]*z_shape[kk];
+                    for(int zz=0; zz<n; ++zz){
+                        out[zz] += data[n*row_idx + zz]*shape_val;
+
+                    }
+                }
+            }
+        }
+    }
+
+}
+
+__global__ void test_gpu_interpolation_kernel(double* quad_pts, double* srange, double* trange, double* zrange, double* loc, double* out, int n, int n_points){
+    int idx = threadIdx.x + blockIdx.x*blockDim.x;
+    if(idx < n_points){
+        double* loc_arr = loc + 3*idx;
+        double* out_arr  =  out + idx*n;
+         // double s = loc_arr[0];
+        double t = loc_arr[1];
+        double z = loc_arr[2];
+        // we want to exploit periodicity in the B-field, but leave sine(theta) unchanged
+        t = fmod(t, 2*M_PI);
+        t += 2*M_PI*(t < 0);
+
+        // we can modify z because it's only used to access the B-field location
+        double period = zrange[1];
+        z = fmod(z, period);
+        z += period*(z < 0);
+
+        
+        // exploit stellarator symmetry
+        bool symmetry_exploited = t > M_PI;
+        if(symmetry_exploited){
+            z = period - z;
+            t = 2*M_PI - t;
+        }
+        loc_arr[1] = t;
+        loc_arr[2] = z;
+
+        interpolate(loc_arr, quad_pts, out_arr, srange, trange, zrange, n);
+
+        if(symmetry_exploited){
+            out_arr[2] *= -1.0;
+            out_arr[3] *= -1.0;
+        }
+
+    }
+}
+
+extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, int n, int n_points){
+    py::buffer_info quadpts_buf = quad_pts.request();
+    double* quadpts_arr = static_cast<double*>(quadpts_buf.ptr);
+
+    py::buffer_info s_buf = srange.request();
+    double* srange_arr = static_cast<double*>(s_buf.ptr);
+
+    py::buffer_info t_buf = trange.request();
+    double* trange_arr = static_cast<double*>(t_buf.ptr);
+
+    py::buffer_info z_buf = zrange.request();
+    double* zrange_arr = static_cast<double*>(z_buf.ptr);
+
+    py::buffer_info loc_buf = loc.request();
+    double* loc_arr = static_cast<double*>(loc_buf.ptr);
+
+
+    double* srange_d;
+    cudaMalloc((void**)&srange_d, 3 * sizeof(double));
+    cudaMemcpy(srange_d, srange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
+
+    double* zrange_d;
+    cudaMalloc((void**)&zrange_d, 3 * sizeof(double));
+    cudaMemcpy(zrange_d, zrange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
+
+    double* trange_d;
+    cudaMalloc((void**)&trange_d, 3 * sizeof(double));
+    cudaMemcpy(trange_d, trange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
+
+    double* quadpts_d;
+    cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(double));
+    cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(double), cudaMemcpyHostToDevice);
+
+    double* loc_d;
+    cudaMalloc((void**)&loc_d, loc.size() * sizeof(double));
+    cudaMemcpy(loc_d, loc_arr, loc.size() * sizeof(double), cudaMemcpyHostToDevice);
+
+
+    double* out_d;
+    cudaMalloc((void**)&out_d, n*n_points * sizeof(double));
+
+
+
+    int nthreads = 256;
+    int nblks = n_points / nthreads + 1;
+    test_gpu_interpolation_kernel<<<nblks, nthreads>>>(quadpts_d, srange_d, trange_d, zrange_d, loc_d, out_d, n, n_points);
+   
+    double out[n*n_points];
+    cudaMemcpy(&out, out_d, n*n_points * sizeof(double), cudaMemcpyDeviceToHost);
+    auto result = py::array_t<double>(n*n_points, out);
+    return result;
+
+}
 
 extern "C" py::array_t<double> test_interpolation(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, int n){
     py::buffer_info quadpts_buf = quad_pts.request();

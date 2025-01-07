@@ -61,13 +61,12 @@ def my_interpolant(xyz, xran, yran, zran, fun):
                 quad_pts[yran[2]*zran[2]*i + zran[2]*j + k] = [x_grid[i], y_grid[j], z_grid[k]]
 
     quad_info = fun(quad_pts[:,0], quad_pts[:, 1], quad_pts[:,2], flatten=False)
-    output = np.zeros(xyz.shape)
 
-    for i in range(xyz.shape[0]):
-        loc = xyz[i,:]
-        interpolated_values = sopp.test_interpolation(quad_info, xran, yran, zran, loc, 3)
-        # print(interpolated_values)
-        output[i,:] = interpolated_values
+    output = sopp.test_gpu_interpolation(quad_info, xran, yran, zran, xyz, 3, xyz.shape[0])
+    print("output", output)
+
+    output = np.reshape(output, (xyz.shape[0], quad_info.shape[1]))
+
     return output
 
 def subtest_regular_grid_interpolant_exact(dim, degree):
@@ -87,12 +86,12 @@ def subtest_regular_grid_interpolant_exact(dim, degree):
         interpolant = sopp.RegularGridInterpolant3D(rule, xran, yran, zran, dim, True)
         interpolant.interpolate_batch(fun)
 
-        nsamples = 10000
+        nsamples = 100
         xpoints = np.random.uniform(low=xran[0], high=xran[1], size=(nsamples, ))
         ypoints = np.random.uniform(low=yran[0], high=yran[1], size=(nsamples, ))
         zpoints = np.random.uniform(low=zran[0], high=zran[1], size=(nsamples, ))
         xyz = np.asarray([xpoints, ypoints, zpoints]).T.copy()
-
+        xyz = np.ascontiguousarray(xyz)
         # print("xyz", xyz)
 
         fhxyz = np.zeros((nsamples, dim))
@@ -107,6 +106,8 @@ def subtest_regular_grid_interpolant_exact(dim, degree):
 
         # print("error", fxyz - fhxyz_mine)
         # assert np.allclose(fxyz, fhxyz_mine, atol=1e-12, rtol=1e-12)
+        print(fhxyz)
+        print(fhxyz_mine)
         print("Polynomial interpolation difference on {} points: {}".format(nsamples, np.max(np.abs((fhxyz-fhxyz_mine)))))
         # print(np.max(np.abs((fxyz-fhxyz_mine))))
 
@@ -178,24 +179,29 @@ def test_interpolant_bfield(n_metagrid_pts):
     quad_info = np.hstack((modB, modB_derivs, G, iota))
     quad_info = np.ascontiguousarray(quad_info)
 
-    # Calculate interpolation
-    new_interpolation = np.zeros((stz.shape[0], 6))
-    for i in range(stz.shape[0]):
-        loc = stz[i,:]
-        # while loc[2] > 2*np.pi/nfp:
-        #     loc[2] -= 2*np.pi/nfp
-        # symm_exploited = False
-        # if loc[1] > np.pi:
-        #     period = 2*np.pi / nfp
-        #     loc[2] = period - loc[2]
-        #     loc[1] = 2*np.pi - loc[1]
-        interpolated_values = sopp.test_interpolation(quad_info, srange, trange, zrange, loc, 6)
+    stz = np.ascontiguousarray(stz)
 
-        # if symm_exploited:
-        #     interpolated_values[2] *= -1
-        #     interpolated_values[3] *= -1
-        # print(interpolated_values)
-        new_interpolation[i,:] = interpolated_values
+    # Calculate interpolation
+    # new_interpolation = np.zeros((stz.shape[0], 6))
+    new_interpolation = sopp.test_gpu_interpolation(quad_info, srange, trange, zrange, stz, 6, stz.shape[0])
+    new_interpolation = np.reshape(new_interpolation, (stz.shape[0], 6))
+
+    # for i in range(stz.shape[0]):
+    #     loc = stz[i,:]
+    #     # while loc[2] > 2*np.pi/nfp:
+    #     #     loc[2] -= 2*np.pi/nfp
+    #     # symm_exploited = False
+    #     # if loc[1] > np.pi:
+    #     #     period = 2*np.pi / nfp
+    #     #     loc[2] = period - loc[2]
+    #     #     loc[1] = 2*np.pi - loc[1]
+    #     interpolated_values = sopp.test_interpolation(quad_info, srange, trange, zrange, loc, 6)
+
+    #     # if symm_exploited:
+    #     #     interpolated_values[2] *= -1
+    #     #     interpolated_values[3] *= -1
+    #     # print(interpolated_values)
+    #     new_interpolation[i,:] = interpolated_values
 
     print(np.abs(simsopt_interpolation - new_interpolation) / simsopt_interpolation)
     diff =np.max(np.abs(simsopt_interpolation - new_interpolation) / simsopt_interpolation)
