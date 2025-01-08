@@ -91,143 +91,142 @@ __host__ __device__ void shape(double x, double* shape){
 // }
 
  __device__ __forceinline__ void interpolate(double* loc, double* data, double* out, double* srange_arr, double* trange_arr, double* zrange_arr, int n){
-    if(threadIdx.y == 0){
+    
+    int zz = threadIdx.y;
+    int ns = srange_arr[2];
+    int nt = trange_arr[2];
+    int nz = zrange_arr[2];
 
-        int ns = srange_arr[2];
-        int nt = trange_arr[2];
-        int nz = zrange_arr[2];
+    // Need to interpolate modB, modB derivs, G, and iota
 
-        // Need to interpolate modB, modB derivs, G, and iota
+    // arrays to hold weights for interpolation    
+    double s_shape[4];
+    double t_shape[4];
+    double z_shape[4];
 
-        // arrays to hold weights for interpolation    
-        double s_shape[4];
-        double t_shape[4];
-        double z_shape[4];
+    /*
+    * index into the grid and calculate weights
+    */ 
+    double s_grid_size = (srange_arr[1]-srange_arr[0]) / (srange_arr[2]-1);
+    double theta_grid_size = (trange_arr[1]-trange_arr[0]) / (trange_arr[2]-1);
+    double zeta_grid_size = (zrange_arr[1]-zrange_arr[0]) / (zrange_arr[2]-1);
 
-        /*
-        * index into the grid and calculate weights
-        */ 
-        double s_grid_size = (srange_arr[1]-srange_arr[0]) / (srange_arr[2]-1);
-        double theta_grid_size = (trange_arr[1]-trange_arr[0]) / (trange_arr[2]-1);
-        double zeta_grid_size = (zrange_arr[1]-zrange_arr[0]) / (zrange_arr[2]-1);
+    // fmt::print("s grid values:\n");
+    // for(int ii=0; ii<ns; ++ii){
+    //     fmt::print("{} {}\n", ii, ii*s_grid_size);
+    // }
+    
+    // fmt::print("t grid values:\n");
+    // for(int ii=0; ii<nt; ++ii){
+    //     fmt::print("{} {}\n", ii, ii*theta_grid_size);
+    // }
 
-        // fmt::print("s grid values:\n");
-        // for(int ii=0; ii<ns; ++ii){
-        //     fmt::print("{} {}\n", ii, ii*s_grid_size);
-        // }
-        
-        // fmt::print("t grid values:\n");
-        // for(int ii=0; ii<nt; ++ii){
-        //     fmt::print("{} {}\n", ii, ii*theta_grid_size);
-        // }
-
-        // fmt::print("z grid values:\n");
-        // for(int ii=0; ii<nz; ++ii){
-        //     fmt::print("{} {}\n", ii, ii*zeta_grid_size);
-        // }
-        // Get Boozer coordinates of current position
-        double s = loc[0];
-        double t = loc[1];
-        double z = loc[2];
-
-
-
-        // fmt::print("new interpolation s,t,z={} {} {}\n", s, t, z);
-
-        
+    // fmt::print("z grid values:\n");
+    // for(int ii=0; ii<nz; ++ii){
+    //     fmt::print("{} {}\n", ii, ii*zeta_grid_size);
+    // }
+    // Get Boozer coordinates of current position
+    double s = loc[0];
+    double t = loc[1];
+    double z = loc[2];
 
 
-        // index into mesh to obtain nearby points
-        // get correct "meta grid" for continuity
-        // keeping stz order
 
-        // starting change
-
-        // int i = (int) s / s_grid_size;
-        // int j = (int) t / theta_grid_size;
-        // int k = (int) z / zeta_grid_size;
-
-
-        int i = 3*((int) ((s - srange_arr[0]) / s_grid_size) / 3);
-        int j = 3*((int) ((t - trange_arr[0]) / theta_grid_size) / 3);
-        int k = 3*((int) ((z - zrange_arr[0]) / zeta_grid_size) / 3);
-
-
-        i = min(i, (int)srange_arr[2]-4);
-        j = min(j, (int)trange_arr[2]-4);
-        k = min(k, (int)zrange_arr[2]-4);
-
-        // fmt::print("i={}, j={}, k={}\n", i, j,k);
-        // // use nearest grid pts when s>1
-        // if(i >= ns){
-        //     std::cout << "s=" << s << std::endl;
-        // }
-        // i = min(ns-1, i);
-
-
-        // std::cout << "i,j,k=" << i << "\t" << j << "\t" << k << "\n";
-
-        // normalized positions in local grid wrt e.g. r at index i
-        // maps the position to [0,3] in the "meta grid"
-
-        double s_rel = (s -  i*s_grid_size - srange_arr[0]) / s_grid_size;
-        double theta_rel = (t -  j*theta_grid_size - trange_arr[0]) / theta_grid_size;
-        double zeta_rel = (z - k*zeta_grid_size - zrange_arr[0]) / zeta_grid_size;
-
-        // fmt::print("s_rel,t_rel,z_rel={} {} {}\n", s_rel, theta_rel, zeta_rel);
-        // std::cout << "s_rel,theta_rel,zeta_rel=" << s_rel << "\t" << theta_rel << "\t" << zeta_rel << std::endl;
-
-        // fill shape vectors
-        // this isn't particularly efficient
-        shape(s_rel, s_shape);
-        shape(theta_rel, t_shape);
-        shape(zeta_rel, z_shape);
-
-        /*
-        From here it remains to perform the necessary interpolations
-        As opposed to Cartesian coordinates, we don't need to monitor the surface dist via interpolation
-        We also don't need to calculate the derivative of any of the interpolations
-        This lets us interpolate everything in one set of nested loops 
-        */
-
+    // fmt::print("new interpolation s,t,z={} {} {}\n", s, t, z);
 
     
 
 
-        // store interpolants in a common array, indexed the same as the columns of the quad info
-        // modB, derivs of modB, G, iota
-        // double interpolants[6] = {0};
+    // index into mesh to obtain nearby points
+    // get correct "meta grid" for continuity
+    // keeping stz order
 
-        // std::cout << "interpolating" << std::endl;
+    // starting change
 
-        // // quad pts are indexed s t z
-        for(int ii=0; ii<=3; ++ii){ // s grid
-            if((i+ii) < ns){
-                for(int jj=0; jj<=3; ++jj){ // theta grid           
-                    int wrap_j = (j+jj) % nt;
-                    for(int kk=0; kk<=3; ++kk){ // zeta grid
-                        int wrap_k = (k+kk) % nz;
-                        int row_idx = (i+ii)*nt*nz + wrap_j*nz + wrap_k;
+    // int i = (int) s / s_grid_size;
+    // int j = (int) t / theta_grid_size;
+    // int k = (int) z / zeta_grid_size;
+
+
+    int i = 3*((int) ((s - srange_arr[0]) / s_grid_size) / 3);
+    int j = 3*((int) ((t - trange_arr[0]) / theta_grid_size) / 3);
+    int k = 3*((int) ((z - zrange_arr[0]) / zeta_grid_size) / 3);
+
+
+    i = min(i, (int)srange_arr[2]-4);
+    j = min(j, (int)trange_arr[2]-4);
+    k = min(k, (int)zrange_arr[2]-4);
+
+    // fmt::print("i={}, j={}, k={}\n", i, j,k);
+    // // use nearest grid pts when s>1
+    // if(i >= ns){
+    //     std::cout << "s=" << s << std::endl;
+    // }
+    // i = min(ns-1, i);
+
+
+    // std::cout << "i,j,k=" << i << "\t" << j << "\t" << k << "\n";
+
+    // normalized positions in local grid wrt e.g. r at index i
+    // maps the position to [0,3] in the "meta grid"
+
+    double s_rel = (s -  i*s_grid_size - srange_arr[0]) / s_grid_size;
+    double theta_rel = (t -  j*theta_grid_size - trange_arr[0]) / theta_grid_size;
+    double zeta_rel = (z - k*zeta_grid_size - zrange_arr[0]) / zeta_grid_size;
+
+    // fmt::print("s_rel,t_rel,z_rel={} {} {}\n", s_rel, theta_rel, zeta_rel);
+    // std::cout << "s_rel,theta_rel,zeta_rel=" << s_rel << "\t" << theta_rel << "\t" << zeta_rel << std::endl;
+
+    // fill shape vectors
+    // this isn't particularly efficient
+    shape(s_rel, s_shape);
+    shape(theta_rel, t_shape);
+    shape(zeta_rel, z_shape);
+
+    /*
+    From here it remains to perform the necessary interpolations
+    As opposed to Cartesian coordinates, we don't need to monitor the surface dist via interpolation
+    We also don't need to calculate the derivative of any of the interpolations
+    This lets us interpolate everything in one set of nested loops 
+    */
+
+
+
+
+
+    // store interpolants in a common array, indexed the same as the columns of the quad info
+    // modB, derivs of modB, G, iota
+    // double interpolants[6] = {0};
+
+    // std::cout << "interpolating" << std::endl;
+
+    // // quad pts are indexed s t z
+    for(int ii=0; ii<=3; ++ii){ // s grid
+        if((i+ii) < ns){
+            for(int jj=0; jj<=3; ++jj){ // theta grid           
+                int wrap_j = (j+jj) % nt;
+                for(int kk=0; kk<=3; ++kk){ // zeta grid
+                    int wrap_k = (k+kk) % nz;
+                    int row_idx = (i+ii)*nt*nz + wrap_j*nz + wrap_k;
+                    
+                    double shape_val = s_shape[ii]*t_shape[jj]*z_shape[kk];
+                    // std::cout << row_idx << " modB interpolant: " << data[n*row_idx] << std::endl;
+
+                    // fmt::print("modB val={}, s_shape={}, t_shape={}, z_shape={}\n", data[n*row_idx], s_shape[ii], t_shape[jj], z_shape[kk]);
+                    for(int zz=0; zz<n; ++zz){
+                        // // std::cout << "accessing elt " << 6*row_idx + zz << "\n";
+                        out[zz] += data[n*row_idx + zz]*shape_val;
+                        // if(zz == 0){
+                        //     // std::cout << quadpts_arr[6*row_idx + zz] << "\n";
+                        // }
                         
-                        double shape_val = s_shape[ii]*t_shape[jj]*z_shape[kk];
-                        // std::cout << row_idx << " modB interpolant: " << data[n*row_idx] << std::endl;
-
-                        // fmt::print("modB val={}, s_shape={}, t_shape={}, z_shape={}\n", data[n*row_idx], s_shape[ii], t_shape[jj], z_shape[kk]);
-                        for(int zz=0; zz<n; ++zz){
-                            // // std::cout << "accessing elt " << 6*row_idx + zz << "\n";
-                            out[zz] += data[n*row_idx + zz]*shape_val;
-                            // if(zz == 0){
-                            //     // std::cout << quadpts_arr[6*row_idx + zz] << "\n";
-                            // }
-                            
-                        }
-                        // std::cout << "running modB interpolant: " << interpolants[0] << std::endl;
-
                     }
+                    // std::cout << "running modB interpolant: " << interpolants[0] << std::endl;
+
                 }
             }
-
         }
+
     }
     // for(int ii=0; ii<n; ++ii){
     //     fmt::print("{}\t", out[ii]);
