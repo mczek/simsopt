@@ -21,7 +21,7 @@ namespace py = pybind11;
 // #define dt 1e-7
 
 #define BATCH_SIZE 1000
-#define PARTICLES_PER_BLOCK 32
+#define PARTICLES_PER_BLOCK 128
 
 // Particle Data Structure
 typedef struct particle_t {
@@ -199,7 +199,7 @@ __host__ __device__ void shape(double x, double* shape){
     // double interpolants[6] = {0};
 
     // std::cout << "interpolating" << std::endl;
-
+    double thread_total = 0.0;
     // // quad pts are indexed s t z
     for(int ii=0; ii<=3; ++ii){ // s grid
         if((i+ii) < ns){
@@ -213,14 +213,13 @@ __host__ __device__ void shape(double x, double* shape){
                     // std::cout << row_idx << " modB interpolant: " << data[n*row_idx] << std::endl;
 
                     // fmt::print("modB val={}, s_shape={}, t_shape={}, z_shape={}\n", data[n*row_idx], s_shape[ii], t_shape[jj], z_shape[kk]);
-                    for(int zz=0; zz<n; ++zz){
                         // // std::cout << "accessing elt " << 6*row_idx + zz << "\n";
-                        out[zz] += data[n*row_idx + zz]*shape_val;
+                    thread_total += data[n*row_idx + zz]*shape_val;
                         // if(zz == 0){
                         //     // std::cout << quadpts_arr[6*row_idx + zz] << "\n";
                         // }
                         
-                    }
+
                     // std::cout << "running modB interpolant: " << interpolants[0] << std::endl;
 
                 }
@@ -228,6 +227,7 @@ __host__ __device__ void shape(double x, double* shape){
         }
 
     }
+    out[zz] = thread_total;
     // for(int ii=0; ii<n; ++ii){
     //     fmt::print("{}\t", out[ii]);
     // }
@@ -248,8 +248,15 @@ __host__ __device__ void shape(double x, double* shape){
     
 
     */
-    double interpolants[6] = {0};
-    double loc[3];
+    __shared__ double interpolants_shared[6*PARTICLES_PER_BLOCK];
+    __shared__ double loc_shared[3*PARTICLES_PER_BLOCK];
+    int idx = threadIdx.x * blockDim.y + threadIdx.y;
+    interpolants_shared[idx] = 0.0;
+    __syncthreads();
+
+
+    double* loc = loc_shared + 3* threadIdx.x;
+    double* interpolants = interpolants_shared + 6* threadIdx.x;
     double s = sqrt(state[0]*state[0] + state[1]*state[1]);
     double theta = atan2(state[1], state[0]);
     double z = state[2];
