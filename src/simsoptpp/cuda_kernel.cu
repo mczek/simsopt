@@ -92,7 +92,9 @@ __host__ __device__ void shape(double x, double* shape){
 
  __device__ __forceinline__ void interpolate(double* loc, double* data, double* out, double* srange_arr, double* trange_arr, double* zrange_arr, int n){
     
-    int zz = threadIdx.y;
+    int idx = threadIdx.x;
+    int zz = idx % 6;
+
     int ns = srange_arr[2];
     int nt = trange_arr[2];
     int nz = zrange_arr[2];
@@ -248,21 +250,25 @@ __host__ __device__ void shape(double x, double* shape){
     
 
     */
+    int idx = threadIdx.x;
+    int block_part_id = idx / 6;
+    int part_thread_id =   idx % 6;
+
+
     __shared__ double interpolants_shared[6*PARTICLES_PER_BLOCK];
     __shared__ double loc_shared[3*PARTICLES_PER_BLOCK];
-    int idx = threadIdx.x * blockDim.y + threadIdx.y;
     interpolants_shared[idx] = 0.0;
     __syncthreads();
 
 
-    double* loc = loc_shared + 3* threadIdx.x;
-    double* interpolants = interpolants_shared + 6* threadIdx.x;
+    double* loc = loc_shared + 3* block_part_id;
+    double* interpolants = interpolants_shared + 6* block_part_id;
     double s = sqrt(state[0]*state[0] + state[1]*state[1]);
     double theta = atan2(state[1], state[0]);
     double z = state[2];
     double v_par = state[3];
     bool symmetry_exploited;
-    if(threadIdx.y == 0){
+    if(part_thread_id == 0){
 
 
 
@@ -303,7 +309,7 @@ __host__ __device__ void shape(double x, double* shape){
     interpolate(loc, quadpts_arr, interpolants, srange_arr, trange_arr, zrange_arr, 6);
     __syncthreads();
     
-    if(threadIdx.y == 0){
+    if(part_thread_id == 0){
         if(symmetry_exploited){
             interpolants[2] *= -1.0;
             interpolants[3] *= -1.0;
@@ -335,7 +341,9 @@ __host__ __device__ void shape(double x, double* shape){
 __device__ void setup_particle(particle_t& p, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr,
                          double tmax, double m, double q, double psi0){
                              // double mu;
-    if(threadIdx.y == 0){
+    int idx = threadIdx.x + blockIdx.x*blockDim.x;
+    int part_thread_id =   idx % 6;
+    if(part_thread_id == 0){
         p.t = 0.0;
     }
 
@@ -351,7 +359,7 @@ __device__ void setup_particle(particle_t& p, double* srange_arr, double* trange
     __syncthreads();
     calc_derivs(p.state, p.derivs, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, -1, psi0);
     __syncthreads();
-    if(threadIdx.y == 0){
+    if(part_thread_id == 0){
         p.mu = p.v_perp*p.v_perp/(2*p.derivs[4]);
 
         // dtmax = 0.5*M_PI*G / (modB*vtotal)
@@ -570,8 +578,9 @@ __global__ void particle_trace_kernel(particle_t* particles, double* srange_arr,
 __global__ void setup_particle_kernel(particle_t* particles, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr,
                         double tmax, double m, double q, double psi0, int nparticles){
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
-    if(idx < nparticles){
-        setup_particle(particles[idx], srange_arr, trange_arr, zrange_arr, quadpts_arr, tmax, m, q, psi0);
+    int particle_id = idx / 6;
+    if(particle_id < nparticles){
+        setup_particle(particles[particle_id], srange_arr, trange_arr, zrange_arr, quadpts_arr, tmax, m, q, psi0);
     }
 }
 
@@ -585,8 +594,9 @@ __global__ void build_state_kernel(particle_t* particles, int deriv_id, int npar
  
 __global__ void calc_derivs_kernel(particle_t* particles, int deriv_id, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr, double m, double q, double psi0, int nparticles){
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
-    if(idx < nparticles){
-        calc_derivs(particles[idx].x_temp, particles[idx].derivs + 6*deriv_id, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, particles[idx].mu, psi0);
+    int particle_id = idx / 6;
+    if(particle_id < nparticles){
+        calc_derivs(particles[particle_id].x_temp, particles[particle_id].derivs + 6*deriv_id, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, particles[particle_id].mu, psi0);
     }
 }
 
@@ -698,10 +708,10 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
     cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(double), cudaMemcpyHostToDevice);
 
     int threads_per_particle = 6;
-    dim3 interpolation_grid (PARTICLES_PER_BLOCK, threads_per_particle, 1);
+    int threads_per_block = threads_per_particle*PARTICLES_PER_BLOCK;
     int interpolation_blocks = nparticles / PARTICLES_PER_BLOCK + 1;
 
-    setup_particle_kernel<<<interpolation_blocks, interpolation_grid>>>(particles_d, srange_d, trange_d, zrange_d, quadpts_d, tmax, m, q, psi0, nparticles);
+    setup_particle_kernel<<<interpolation_blocks, threads_per_block>>>(particles_d, srange_d, trange_d, zrange_d, quadpts_d, tmax, m, q, psi0, nparticles);
 
     // cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost);
 
@@ -736,7 +746,7 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
 
 
                 // cudaMemcpy(particles_d, particles, nparticles * sizeof(particle_t), cudaMemcpyHostToDevice);
-                calc_derivs_kernel<<<interpolation_blocks, interpolation_grid>>>(particles_d, k, srange_d, trange_d, zrange_d, quadpts_d, m, q, psi0, nparticles); 
+                calc_derivs_kernel<<<interpolation_blocks, threads_per_block>>>(particles_d, k, srange_d, trange_d, zrange_d, quadpts_d, m, q, psi0, nparticles); 
                 // cudaDeviceSynchronize();
                 // cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost);
                 // for(int p=0; p<nparticles; ++p){
