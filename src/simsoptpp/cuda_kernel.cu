@@ -90,7 +90,7 @@ __host__ __device__ void shape(double x, double* shape){
 //     return;         
 // }
 
- __device__ __forceinline__ void interpolate(double* loc, double* data, double* out, double* srange_arr, double* trange_arr, double* zrange_arr, int n){
+ __device__ __forceinline__ void interpolate(particle_t& p, double* loc, double* data, double* out, double* srange_arr, double* trange_arr, double* zrange_arr, double* s_shape, double* t_shape, double* z_shape, int i, int j, int k, int n){
     
     int idx = threadIdx.x;
     int zz = idx % 6;
@@ -102,88 +102,7 @@ __host__ __device__ void shape(double x, double* shape){
     // Need to interpolate modB, modB derivs, G, and iota
 
     // arrays to hold weights for interpolation    
-    double s_shape[4];
-    double t_shape[4];
-    double z_shape[4];
-
-    /*
-    * index into the grid and calculate weights
-    */ 
-    double s_grid_size = (srange_arr[1]-srange_arr[0]) / (srange_arr[2]-1);
-    double theta_grid_size = (trange_arr[1]-trange_arr[0]) / (trange_arr[2]-1);
-    double zeta_grid_size = (zrange_arr[1]-zrange_arr[0]) / (zrange_arr[2]-1);
-
-    // fmt::print("s grid values:\n");
-    // for(int ii=0; ii<ns; ++ii){
-    //     fmt::print("{} {}\n", ii, ii*s_grid_size);
-    // }
     
-    // fmt::print("t grid values:\n");
-    // for(int ii=0; ii<nt; ++ii){
-    //     fmt::print("{} {}\n", ii, ii*theta_grid_size);
-    // }
-
-    // fmt::print("z grid values:\n");
-    // for(int ii=0; ii<nz; ++ii){
-    //     fmt::print("{} {}\n", ii, ii*zeta_grid_size);
-    // }
-    // Get Boozer coordinates of current position
-    double s = loc[0];
-    double t = loc[1];
-    double z = loc[2];
-
-
-
-    // fmt::print("new interpolation s,t,z={} {} {}\n", s, t, z);
-
-    
-
-
-    // index into mesh to obtain nearby points
-    // get correct "meta grid" for continuity
-    // keeping stz order
-
-    // starting change
-
-    // int i = (int) s / s_grid_size;
-    // int j = (int) t / theta_grid_size;
-    // int k = (int) z / zeta_grid_size;
-
-
-    int i = 3*((int) ((s - srange_arr[0]) / s_grid_size) / 3);
-    int j = 3*((int) ((t - trange_arr[0]) / theta_grid_size) / 3);
-    int k = 3*((int) ((z - zrange_arr[0]) / zeta_grid_size) / 3);
-
-
-    i = min(i, (int)srange_arr[2]-4);
-    j = min(j, (int)trange_arr[2]-4);
-    k = min(k, (int)zrange_arr[2]-4);
-
-    // fmt::print("i={}, j={}, k={}\n", i, j,k);
-    // // use nearest grid pts when s>1
-    // if(i >= ns){
-    //     std::cout << "s=" << s << std::endl;
-    // }
-    // i = min(ns-1, i);
-
-
-    // std::cout << "i,j,k=" << i << "\t" << j << "\t" << k << "\n";
-
-    // normalized positions in local grid wrt e.g. r at index i
-    // maps the position to [0,3] in the "meta grid"
-
-    double s_rel = (s -  i*s_grid_size - srange_arr[0]) / s_grid_size;
-    double theta_rel = (t -  j*theta_grid_size - trange_arr[0]) / theta_grid_size;
-    double zeta_rel = (z - k*zeta_grid_size - zrange_arr[0]) / zeta_grid_size;
-
-    // fmt::print("s_rel,t_rel,z_rel={} {} {}\n", s_rel, theta_rel, zeta_rel);
-    // std::cout << "s_rel,theta_rel,zeta_rel=" << s_rel << "\t" << theta_rel << "\t" << zeta_rel << std::endl;
-
-    // fill shape vectors
-    // this isn't particularly efficient
-    shape(s_rel, s_shape);
-    shape(theta_rel, t_shape);
-    shape(zeta_rel, z_shape);
 
     /*
     From here it remains to perform the necessary interpolations
@@ -238,7 +157,7 @@ __host__ __device__ void shape(double x, double* shape){
 }
 
 // out contains derivatives for x , y, z, v_par, and then norm of B and surface distance interpolation
- __device__ void calc_derivs(double* state, double* out, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr, double m, double q, double mu, double psi0){
+ __device__ void calc_derivs(particle_t& p, double* state, double* out, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr, double m, double q, double mu, double psi0){
     /*
     * Returns     
     out[0] = ds/dtime
@@ -268,35 +187,35 @@ __host__ __device__ void shape(double x, double* shape){
     double z = state[2];
     double v_par = state[3];
     bool symmetry_exploited;
+
+
+
+
+    // fmt::print("s={}, theta={}, zeta={}, v_par={}\n", s, theta, z, v_par);
+
+    // fmt::print("m={}, mu={}, q={}, psi0={}\n", m, mu, q, psi0);
+
+    // exploit potential symmetry
+    
+    // we want to exploit periodicity in the B-field, but leave sine(theta) unchanged
+    double t = fmod(theta, 2*M_PI);
+    t += 2*M_PI*(t < 0);
+
+    // we can modify z because it's only used to access the B-field location
+    double period = zrange_arr[1];
+    z = fmod(z, period);
+    z += period*(z < 0);
+
+    
+    // exploit stellarator symmetry
+    symmetry_exploited = t > M_PI;
+    if(symmetry_exploited){
+        z = period - z;
+        t = 2*M_PI - t;
+        // std::cout << "symmetry exploited\n";
+
+    }
     if(part_thread_id == 0){
-
-
-
-
-        // fmt::print("s={}, theta={}, zeta={}, v_par={}\n", s, theta, z, v_par);
-
-        // fmt::print("m={}, mu={}, q={}, psi0={}\n", m, mu, q, psi0);
-
-        // exploit potential symmetry
-        
-        // we want to exploit periodicity in the B-field, but leave sine(theta) unchanged
-        double t = fmod(theta, 2*M_PI);
-        t += 2*M_PI*(t < 0);
-
-        // we can modify z because it's only used to access the B-field location
-        double period = zrange_arr[1];
-        z = fmod(z, period);
-        z += period*(z < 0);
-
-        
-        // exploit stellarator symmetry
-        symmetry_exploited = t > M_PI;
-        if(symmetry_exploited){
-            z = period - z;
-            t = 2*M_PI - t;
-            // std::cout << "symmetry exploited\n";
-
-        }
 
         loc[0] = s;
         loc[1] = t;
@@ -305,8 +224,46 @@ __host__ __device__ void shape(double x, double* shape){
         // fmt::print("values for interpolation: s={}, t={}, z={}\n", s, t, z);
 
     }
+    __syncthreads();
+    double s_shape[4];
+    double t_shape[4];
+    double z_shape[4];
+
+    /*
+    * index into the grid and calculate weights
+    */ 
+    double s_grid_size = (srange_arr[1]-srange_arr[0]) / (srange_arr[2]-1);
+    double theta_grid_size = (trange_arr[1]-trange_arr[0]) / (trange_arr[2]-1);
+    double zeta_grid_size = (zrange_arr[1]-zrange_arr[0]) / (zrange_arr[2]-1);
+
+    // Get Boozer coordinates of current position
+    // double s = loc[0];
+    // double t = loc[1];
+    // double z = loc[2];
+
+    int i = 3*((int) ((s - srange_arr[0]) / s_grid_size) / 3);
+    int j = 3*((int) ((t - trange_arr[0]) / theta_grid_size) / 3);
+    int k = 3*((int) ((z - zrange_arr[0]) / zeta_grid_size) / 3);
+
+
+    i = min(i, (int)srange_arr[2]-4);
+    j = min(j, (int)trange_arr[2]-4);
+    k = min(k, (int)zrange_arr[2]-4);
+
+    // normalized positions in local grid wrt e.g. r at index i
+    // maps the position to [0,3] in the "meta grid"
+
+    double s_rel = (s -  i*s_grid_size - srange_arr[0]) / s_grid_size;
+    double theta_rel = (t -  j*theta_grid_size - trange_arr[0]) / theta_grid_size;
+    double zeta_rel = (z - k*zeta_grid_size - zrange_arr[0]) / zeta_grid_size;
+
+    shape(s_rel, s_shape);
+    shape(theta_rel, t_shape);
+    shape(zeta_rel, z_shape);
+
+
     __syncthreads();    
-    interpolate(loc, quadpts_arr, interpolants, srange_arr, trange_arr, zrange_arr, 6);
+    interpolate(p, loc, quadpts_arr, interpolants, srange_arr, trange_arr, zrange_arr, s_shape, t_shape, z_shape, i, j, k, 6);
     __syncthreads();
     
     if(part_thread_id == 0){
@@ -357,7 +314,7 @@ __device__ void setup_particle(particle_t& p, double* srange_arr, double* trange
     // dummy call to get norm B
     // std::cout << "dummy call to calc_derivs \n";
     __syncthreads();
-    calc_derivs(p.state, p.derivs, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, -1, psi0);
+    calc_derivs(p, p.state, p.derivs, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, -1, psi0);
     __syncthreads();
     if(part_thread_id == 0){
         p.mu = p.v_perp*p.v_perp/(2*p.derivs[4]);
@@ -548,7 +505,7 @@ __device__   void trace_particle(particle_t& p, double* srange_arr, double* tran
 
         for(int k=0; k<7; ++k){
             build_state(p, k);
-            calc_derivs(p.x_temp, p.derivs + 6*k, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
+            calc_derivs(p, p.x_temp, p.derivs + 6*k, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
         }// std::cout << "k1 " << derivs[0] << "\t" << derivs[1] << "\t" << derivs[2] << "\t" << derivs[3] << "\n";
 
         adjust_time(p, tmax);
@@ -596,7 +553,7 @@ __global__ void calc_derivs_kernel(particle_t* particles, int deriv_id, double* 
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
     int particle_id = idx / 6;
     if(particle_id < nparticles){
-        calc_derivs(particles[particle_id].x_temp, particles[particle_id].derivs + 6*deriv_id, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, particles[particle_id].mu, psi0);
+        calc_derivs(particles[particle_id], particles[particle_id].x_temp, particles[particle_id].derivs + 6*deriv_id, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, particles[particle_id].mu, psi0);
     }
 }
 
