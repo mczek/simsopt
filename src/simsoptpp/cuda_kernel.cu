@@ -36,6 +36,10 @@ typedef struct particle_t {
     double derivs[42];
     // double k2[6], k3[6], k4[6], k5[6], k6[6], k7[6];   
     double x_temp[4], x_err[4];
+    double s_shape[4], t_shape[4], z_shape[4];
+    int i, j, k;
+    double interpolation_loc[3];
+    bool symmetry_exploited;
 } particle_t;
 
 __global__ void addKernel(int *c, const int* a, const int* b, int size){
@@ -90,7 +94,7 @@ __host__ __device__ void shape(double x, double* shape){
 //     return;         
 // }
 
- __device__ __forceinline__ void interpolate(particle_t& p, double* loc, double* data, double* out, double* srange_arr, double* trange_arr, double* zrange_arr, double* s_shape, double* t_shape, double* z_shape, int i, int j, int k, int n){
+ __device__ __forceinline__ void interpolate(particle_t& p, double* loc, double* data, double* out, double* srange_arr, double* trange_arr, double* zrange_arr, int n){
     
     int idx = threadIdx.x;
     int zz = idx % 6;
@@ -123,14 +127,14 @@ __host__ __device__ void shape(double x, double* shape){
     double thread_total = 0.0;
     // // quad pts are indexed s t z
     for(int ii=0; ii<=3; ++ii){ // s grid
-        if((i+ii) < ns){
+        if((p.i+ii) < ns){
             for(int jj=0; jj<=3; ++jj){ // theta grid           
-                int wrap_j = (j+jj) % nt;
+                int wrap_j = (p.j+jj) % nt;
                 for(int kk=0; kk<=3; ++kk){ // zeta grid
-                    int wrap_k = (k+kk) % nz;
-                    int row_idx = (i+ii)*nt*nz + wrap_j*nz + wrap_k;
+                    int wrap_k = (p.k+kk) % nz;
+                    int row_idx = (p.i+ii)*nt*nz + wrap_j*nz + wrap_k;
                     
-                    double shape_val = s_shape[ii]*t_shape[jj]*z_shape[kk];
+                    double shape_val = p.s_shape[ii]*p.t_shape[jj]*p.z_shape[kk];
                     // std::cout << row_idx << " modB interpolant: " << data[n*row_idx] << std::endl;
 
                     // fmt::print("modB val={}, s_shape={}, t_shape={}, z_shape={}\n", data[n*row_idx], s_shape[ii], t_shape[jj], z_shape[kk]);
@@ -182,92 +186,27 @@ __host__ __device__ void shape(double x, double* shape){
 
     double* loc = loc_shared + 3* block_part_id;
     double* interpolants = interpolants_shared + 6* block_part_id;
-    double s = sqrt(state[0]*state[0] + state[1]*state[1]);
-    double theta = atan2(state[1], state[0]);
-    double z = state[2];
-    double v_par = state[3];
-    bool symmetry_exploited;
-
-
-
-
-    // fmt::print("s={}, theta={}, zeta={}, v_par={}\n", s, theta, z, v_par);
-
-    // fmt::print("m={}, mu={}, q={}, psi0={}\n", m, mu, q, psi0);
-
-    // exploit potential symmetry
     
-    // we want to exploit periodicity in the B-field, but leave sine(theta) unchanged
-    double t = fmod(theta, 2*M_PI);
-    t += 2*M_PI*(t < 0);
-
-    // we can modify z because it's only used to access the B-field location
-    double period = zrange_arr[1];
-    z = fmod(z, period);
-    z += period*(z < 0);
-
-    
-    // exploit stellarator symmetry
-    symmetry_exploited = t > M_PI;
-    if(symmetry_exploited){
-        z = period - z;
-        t = 2*M_PI - t;
-        // std::cout << "symmetry exploited\n";
-
-    }
     if(part_thread_id == 0){
-
-        loc[0] = s;
-        loc[1] = t;
-        loc[2] = z;
-
-        // fmt::print("values for interpolation: s={}, t={}, z={}\n", s, t, z);
-
+        loc[0] = p.interpolation_loc[0];
+        loc[1] = p.interpolation_loc[1];
+        loc[2] = p.interpolation_loc[2];
     }
-    __syncthreads();
-    double s_shape[4];
-    double t_shape[4];
-    double z_shape[4];
-
-    /*
-    * index into the grid and calculate weights
-    */ 
-    double s_grid_size = (srange_arr[1]-srange_arr[0]) / (srange_arr[2]-1);
-    double theta_grid_size = (trange_arr[1]-trange_arr[0]) / (trange_arr[2]-1);
-    double zeta_grid_size = (zrange_arr[1]-zrange_arr[0]) / (zrange_arr[2]-1);
-
-    // Get Boozer coordinates of current position
-    // double s = loc[0];
-    // double t = loc[1];
-    // double z = loc[2];
-
-    int i = 3*((int) ((s - srange_arr[0]) / s_grid_size) / 3);
-    int j = 3*((int) ((t - trange_arr[0]) / theta_grid_size) / 3);
-    int k = 3*((int) ((z - zrange_arr[0]) / zeta_grid_size) / 3);
-
-
-    i = min(i, (int)srange_arr[2]-4);
-    j = min(j, (int)trange_arr[2]-4);
-    k = min(k, (int)zrange_arr[2]-4);
-
-    // normalized positions in local grid wrt e.g. r at index i
-    // maps the position to [0,3] in the "meta grid"
-
-    double s_rel = (s -  i*s_grid_size - srange_arr[0]) / s_grid_size;
-    double theta_rel = (t -  j*theta_grid_size - trange_arr[0]) / theta_grid_size;
-    double zeta_rel = (z - k*zeta_grid_size - zrange_arr[0]) / zeta_grid_size;
-
-    shape(s_rel, s_shape);
-    shape(theta_rel, t_shape);
-    shape(zeta_rel, z_shape);
+    
+   
 
 
     __syncthreads();    
-    interpolate(p, loc, quadpts_arr, interpolants, srange_arr, trange_arr, zrange_arr, s_shape, t_shape, z_shape, i, j, k, 6);
+    interpolate(p, loc, quadpts_arr, interpolants, srange_arr, trange_arr, zrange_arr, 6);
     __syncthreads();
     
     if(part_thread_id == 0){
-        if(symmetry_exploited){
+
+        double s = sqrt(p.x_temp[0]*p.x_temp[0] + p.x_temp[1]*p.x_temp[1]);
+        double theta = atan2(p.x_temp[1], p.x_temp[0]);
+        double z = p.x_temp[2];
+        double v_par = p.x_temp[3];
+        if(p.symmetry_exploited){
             interpolants[2] *= -1.0;
             interpolants[3] *= -1.0;
         }
@@ -294,39 +233,9 @@ __host__ __device__ void shape(double x, double* shape){
 
 }
 
-// set initial time step, calculate mu
-__device__ void setup_particle(particle_t& p, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr,
-                         double tmax, double m, double q, double psi0){
-                             // double mu;
-    int idx = threadIdx.x + blockIdx.x*blockDim.x;
-    int part_thread_id =   idx % 6;
-    if(part_thread_id == 0){
-        p.t = 0.0;
-    }
-
-    // p.state[0] = p.y1;
-    // p.state[1] = p.y2;
-    // p.state[2] = p.z;
-    // p.state[3] = p.v_par;
-    // state[4] = p.v_perp;
 
 
-    // dummy call to get norm B
-    // std::cout << "dummy call to calc_derivs \n";
-    __syncthreads();
-    calc_derivs(p, p.state, p.derivs, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, -1, psi0);
-    __syncthreads();
-    if(part_thread_id == 0){
-        p.mu = p.v_perp*p.v_perp/(2*p.derivs[4]);
-
-        // dtmax = 0.5*M_PI*G / (modB*vtotal)
-        p.dtmax = 0.5*M_PI*p.derivs[5] / (p.derivs[4]*p.v_total);
-        p.dt = 1e-3*p.dtmax;
-    }
-
-}
-
-__host__ __device__ void build_state(particle_t& p, int deriv_id){
+__host__ __device__ void build_state(particle_t& p, int deriv_id, double* srange_arr, double* trange_arr, double* zrange_arr){
    
 
     // const double a61 = 9017.0 / 3168.0, a62 = -355.0 / 33.0, a63 = 46732.0 / 5247.0, a64 = 49.0 / 176.0, a65 = -5103.0 / 18656.0;
@@ -390,8 +299,110 @@ __host__ __device__ void build_state(particle_t& p, int deriv_id){
         }
     } 
 
+    double s = sqrt(p.x_temp[0]*p.x_temp[0] + p.x_temp[1]*p.x_temp[1]);
+    double theta = atan2(p.x_temp[1], p.x_temp[0]);
+    double z = p.x_temp[2];
+    double v_par = p.x_temp[3];
+    
+
+
+
+
+    // fmt::print("s={}, theta={}, zeta={}, v_par={}\n", s, theta, z, v_par);
+
+    // fmt::print("m={}, mu={}, q={}, psi0={}\n", m, mu, q, psi0);
+
+    // exploit potential symmetry
+    
+    // we want to exploit periodicity in the B-field, but leave sine(theta) unchanged
+    double t = fmod(theta, 2*M_PI);
+    t += 2*M_PI*(t < 0);
+
+    // we can modify z because it's only used to access the B-field location
+    double period = zrange_arr[1];
+    z = fmod(z, period);
+    z += period*(z < 0);
+
+    
+    // exploit stellarator symmetry
+    p.symmetry_exploited = t > M_PI;
+    if(p.symmetry_exploited){
+        z = period - z;
+        t = 2*M_PI - t;
+        // std::cout << "symmetry exploited\n";
+
+    }
+    p.interpolation_loc[0] = s;
+    p.interpolation_loc[1] = t;
+    p.interpolation_loc[2] = z;
+
+
+    /*
+    * index into the grid and calculate weights
+    */ 
+    double s_grid_size = (srange_arr[1]-srange_arr[0]) / (srange_arr[2]-1);
+    double theta_grid_size = (trange_arr[1]-trange_arr[0]) / (trange_arr[2]-1);
+    double zeta_grid_size = (zrange_arr[1]-zrange_arr[0]) / (zrange_arr[2]-1);
+
+    // Get Boozer coordinates of current position
+    // double s = loc[0];
+    // double t = loc[1];
+    // double z = loc[2];
+
+    p.i = 3*((int) ((s - srange_arr[0]) / s_grid_size) / 3);
+    p.j = 3*((int) ((t - trange_arr[0]) / theta_grid_size) / 3);
+    p.k = 3*((int) ((z - zrange_arr[0]) / zeta_grid_size) / 3);
+
+
+    p.i = min(p.i, (int)srange_arr[2]-4);
+    p.j = min(p.j, (int)trange_arr[2]-4);
+    p.k = min(p.k, (int)zrange_arr[2]-4);
+
+    // normalized positions in local grid wrt e.g. r at index i
+    // maps the position to [0,3] in the "meta grid"
+
+    double s_rel = (s -  p.i*s_grid_size - srange_arr[0]) / s_grid_size;
+    double theta_rel = (t -  p.j*theta_grid_size - trange_arr[0]) / theta_grid_size;
+    double zeta_rel = (z - p.k*zeta_grid_size - zrange_arr[0]) / zeta_grid_size;
+
+    shape(s_rel, p.s_shape);
+    shape(theta_rel, p.t_shape);
+    shape(zeta_rel, p.z_shape);
+
 }
 
+// set initial time step, calculate mu
+__device__ void setup_particle(particle_t& p, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr,
+                         double tmax, double m, double q, double psi0){
+                             // double mu;
+    int idx = threadIdx.x + blockIdx.x*blockDim.x;
+    int part_thread_id =   idx % 6;
+    if(part_thread_id == 0){
+        p.t = 0.0;
+        build_state(p, 0, srange_arr, trange_arr, zrange_arr);
+    }
+
+    // p.state[0] = p.y1;
+    // p.state[1] = p.y2;
+    // p.state[2] = p.z;
+    // p.state[3] = p.v_par;
+    // state[4] = p.v_perp;
+
+
+    // dummy call to get norm B
+    // std::cout << "dummy call to calc_derivs \n";
+    __syncthreads();
+    calc_derivs(p, p.x_temp, p.derivs, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, -1, psi0);
+    __syncthreads();
+    if(part_thread_id == 0){
+        p.mu = p.v_perp*p.v_perp/(2*p.derivs[4]);
+
+        // dtmax = 0.5*M_PI*G / (modB*vtotal)
+        p.dtmax = 0.5*M_PI*p.derivs[5] / (p.derivs[4]*p.v_total);
+        p.dt = 1e-3*p.dtmax;
+    }
+
+}
 
 __host__ __device__ void adjust_time(particle_t& p, double tmax){
     if(p.has_left){
@@ -504,7 +515,7 @@ __device__   void trace_particle(particle_t& p, double* srange_arr, double* tran
         // p.state[3] = p.v_par;
 
         for(int k=0; k<7; ++k){
-            build_state(p, k);
+            build_state(p, k, srange_arr, trange_arr, zrange_arr);
             calc_derivs(p, p.x_temp, p.derivs + 6*k, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
         }// std::cout << "k1 " << derivs[0] << "\t" << derivs[1] << "\t" << derivs[2] << "\t" << derivs[3] << "\n";
 
@@ -541,10 +552,10 @@ __global__ void setup_particle_kernel(particle_t* particles, double* srange_arr,
     }
 }
 
-__global__ void build_state_kernel(particle_t* particles, int deriv_id, int nparticles){
+__global__ void build_state_kernel(particle_t* particles, int deriv_id, double* srange_arr, double* trange_arr, double* zrange_arr, int nparticles){
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
     if(idx < nparticles){
-        build_state(particles[idx], deriv_id);
+        build_state(particles[idx], deriv_id, srange_arr, trange_arr, zrange_arr);
     }
 }
 
@@ -697,7 +708,7 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
             // advance 1 step
             for(int k=0; k<7; ++k){
                 // cudaMemcpy(particles_d, particles, nparticles * sizeof(particle_t), cudaMemcpyHostToDevice);
-                build_state_kernel<<<nblks, nthreads>>>(particles_d, k, nparticles); 
+                build_state_kernel<<<nblks, nthreads>>>(particles_d, k, srange_d, trange_d, zrange_d, nparticles); 
                 // cudaDeviceSynchronize();
                 // cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost);
 
