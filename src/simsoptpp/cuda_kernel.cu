@@ -94,7 +94,7 @@ __host__ __device__ void shape(double x, double* shape){
 //     return;         
 // }
 
- __device__ __forceinline__ void interpolate(particle_t& p, double* loc, double* data, double* out, double* srange_arr, double* trange_arr, double* zrange_arr, int n){
+ __device__ __forceinline__ void interpolate(particle_t& p, const double* __restrict__ data, double* out, const double* __restrict__ srange_arr, const double* __restrict__ trange_arr, const double* __restrict__ zrange_arr, int n){
     
     int idx = threadIdx.x;
     int zz = idx % 6;
@@ -179,25 +179,21 @@ __host__ __device__ void shape(double x, double* shape){
 
 
     __shared__ double interpolants_shared[6*PARTICLES_PER_BLOCK];
-    __shared__ double loc_shared[3*PARTICLES_PER_BLOCK];
+    // __shared__ double loc_shared[3*PARTICLES_PER_BLOCK];
     interpolants_shared[idx] = 0.0;
     __syncthreads();
 
 
-    double* loc = loc_shared + 3* block_part_id;
+    // double* loc = loc_shared + 3* block_part_id;
     double* interpolants = interpolants_shared + 6* block_part_id;
     
-    if(part_thread_id == 0){
-        loc[0] = p.interpolation_loc[0];
-        loc[1] = p.interpolation_loc[1];
-        loc[2] = p.interpolation_loc[2];
-    }
+
     
    
 
 
     __syncthreads();    
-    interpolate(p, loc, quadpts_arr, interpolants, srange_arr, trange_arr, zrange_arr, 6);
+    interpolate(p, quadpts_arr, interpolants, srange_arr, trange_arr, zrange_arr, 6);
     __syncthreads();
     
     if(part_thread_id == 0){
