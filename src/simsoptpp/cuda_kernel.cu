@@ -161,7 +161,7 @@ __host__ __device__ void shape(double x, double* shape){
 }
 
 // out contains derivatives for x , y, z, v_par, and then norm of B and surface distance interpolation
- __device__ void calc_derivs(particle_t& p, double* state, double* out, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr, double m, double q, double mu, double psi0){
+ __device__ void calc_derivs(particle_t& p, double* out, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr, double m, double q, double mu, double psi0){
     /*
     * Returns     
     out[0] = ds/dtime
@@ -388,7 +388,7 @@ __device__ void setup_particle(particle_t& p, double* srange_arr, double* trange
     // dummy call to get norm B
     // std::cout << "dummy call to calc_derivs \n";
     __syncthreads();
-    calc_derivs(p, p.x_temp, p.derivs, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, -1, psi0);
+    calc_derivs(p, p.derivs, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, -1, psi0);
     __syncthreads();
     if(part_thread_id == 0){
         p.mu = p.v_perp*p.v_perp/(2*p.derivs[4]);
@@ -512,7 +512,7 @@ __device__   void trace_particle(particle_t& p, double* srange_arr, double* tran
 
         for(int k=0; k<7; ++k){
             build_state(p, k, srange_arr, trange_arr, zrange_arr);
-            calc_derivs(p, p.x_temp, p.derivs + 6*k, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
+            calc_derivs(p, p.derivs + 6*k, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
         }// std::cout << "k1 " << derivs[0] << "\t" << derivs[1] << "\t" << derivs[2] << "\t" << derivs[3] << "\n";
 
         adjust_time(p, tmax);
@@ -560,7 +560,7 @@ __global__ void calc_derivs_kernel(particle_t* particles, int deriv_id, double* 
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
     int particle_id = idx / 6;
     if(particle_id < nparticles){
-        calc_derivs(particles[particle_id], particles[particle_id].x_temp, particles[particle_id].derivs + 6*deriv_id, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, particles[particle_id].mu, psi0);
+        calc_derivs(particles[particle_id], particles[particle_id].derivs + 6*deriv_id, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, particles[particle_id].mu, psi0);
     }
 }
 
