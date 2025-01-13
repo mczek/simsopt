@@ -21,14 +21,14 @@ namespace py = pybind11;
 // #define dt 1e-7
 
 #define BATCH_SIZE 1000
-#define PARTICLES_PER_BLOCK 128
+#define PARTICLES_PER_BLOCK 1
 
 // Particle Data Structure
 typedef struct particle_t {
     double state[4];
     double v_perp; // Velocity perpendicular
     double v_total;
-    bool has_left;
+    bool has_left, is_done;
     double dt;
     double dtmax;
     double t;
@@ -99,6 +99,10 @@ __host__ __device__ void shape(double x, double* shape){
     int idx = threadIdx.x;
     int zz = idx % 6;
 
+    int ii = threadIdx.y / 16;
+    int jj = (threadIdx.y % 16) / 4;
+    int kk = (threadIdx.y % 16) % 4;
+
     int ns = srange_arr[2];
     int nt = trange_arr[2];
     int nz = zrange_arr[2];
@@ -126,11 +130,42 @@ __host__ __device__ void shape(double x, double* shape){
     // std::cout << "interpolating" << std::endl;
     double thread_total = 0.0;
     // // quad pts are indexed s t z
+
+    // assuming one particle per block
+    __shared__ double reduction_storage[384];
+
+    if((p.i+ii) < ns){
+        int wrap_j = (p.j+jj) % nt;
+        int wrap_k = (p.k+kk) % nz;
+        int row_idx = (p.i+ii)*nt*nz + wrap_j*nz + wrap_k;
+        double shape_val = p.s_shape[ii]*p.t_shape[jj]*p.z_shape[kk];
+        thread_total = data[n*row_idx + zz]*shape_val;
+
+    }
+    int tid = threadIdx.y*6 + threadIdx.x;
+    reduction_storage[tid] = thread_total;
+    __syncthreads();
+    // block reduction
+    int size = 192;
+    while(size >= 6){
+        if (tid < size){
+            reduction_storage[tid] += reduction_storage[tid+size];
+        }
+        size /= 2;
+        __syncthreads();
+    }
+
+    if(tid < 6){
+        out[tid] = reduction_storage[tid];
+    }
+    // atomicAdd(out + zz, thread_total);
+
+    /*
     for(int ii=0; ii<=3; ++ii){ // s grid
         if((p.i+ii) < ns){
             for(int jj=0; jj<=3; ++jj){ // theta grid           
                 int wrap_j = (p.j+jj) % nt;
-                for(int kk=0; kk<=3; ++kk){ // zeta grid
+                // for(int kk=0; kk<=3; ++kk){ // zeta grid
                     int wrap_k = (p.k+kk) % nz;
                     int row_idx = (p.i+ii)*nt*nz + wrap_j*nz + wrap_k;
                     
@@ -147,12 +182,14 @@ __host__ __device__ void shape(double x, double* shape){
 
                     // std::cout << "running modB interpolant: " << interpolants[0] << std::endl;
 
-                }
+                // }
             }
         }
 
     }
-    out[zz] = thread_total;
+    */
+    // atomicAdd(out + zz, thread_total);
+    // out[zz] = thread_total;
     // for(int ii=0; ii<n; ++ii){
     //     fmt::print("{}\t", out[ii]);
     // }
@@ -173,14 +210,14 @@ __host__ __device__ void shape(double x, double* shape){
     
 
     */
-    int idx = threadIdx.x;
-    int block_part_id = idx / 6;
-    int part_thread_id =   idx % 6;
+    // int idx = threadIdx.x;
+    int block_part_id = threadIdx.z;
+    int part_thread_id =  threadIdx.x; // 0-5
 
 
     __shared__ double interpolants_shared[6*PARTICLES_PER_BLOCK];
     // __shared__ double loc_shared[3*PARTICLES_PER_BLOCK];
-    interpolants_shared[idx] = 0.0;
+    interpolants_shared[6*block_part_id + part_thread_id] = 0.0;
     __syncthreads();
 
 
@@ -196,7 +233,7 @@ __host__ __device__ void shape(double x, double* shape){
     interpolate(p, quadpts_arr, interpolants, srange_arr, trange_arr, zrange_arr, 6);
     __syncthreads();
     
-    if(part_thread_id == 0){
+    if(threadIdx.x == 0 && threadIdx.y == 0){
 
         double s = sqrt(p.x_temp[0]*p.x_temp[0] + p.x_temp[1]*p.x_temp[1]);
         double theta = atan2(p.x_temp[1], p.x_temp[0]);
@@ -371,9 +408,8 @@ __host__ __device__ void build_state(particle_t& p, int deriv_id, double* srange
 __device__ void setup_particle(particle_t& p, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr,
                          double tmax, double m, double q, double psi0){
                              // double mu;
-    int idx = threadIdx.x + blockIdx.x*blockDim.x;
-    int part_thread_id =   idx % 6;
-    if(part_thread_id == 0){
+    // int idx = threadIdx.x;
+    if(threadIdx.x == 0 && threadIdx.y == 0){
         p.t = 0.0;
         build_state(p, 0, srange_arr, trange_arr, zrange_arr);
     }
@@ -390,7 +426,7 @@ __device__ void setup_particle(particle_t& p, double* srange_arr, double* trange
     __syncthreads();
     calc_derivs(p, p.derivs, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, -1, psi0);
     __syncthreads();
-    if(part_thread_id == 0){
+    if(threadIdx.x == 0 && threadIdx.y == 0){
         p.mu = p.v_perp*p.v_perp/(2*p.derivs[4]);
 
         // dtmax = 0.5*M_PI*G / (modB*vtotal)
@@ -451,6 +487,8 @@ __host__ __device__ void adjust_time(particle_t& p, double tmax){
 
         double s = sqrt(p.state[0]*p.state[0] + p.state[1]*p.state[1]);
         p.has_left = s >= 1;
+
+        p.is_done = p.has_left || (p.t >= tmax);
 
 
 
@@ -541,8 +579,8 @@ __global__ void particle_trace_kernel(particle_t* particles, double* srange_arr,
 
 __global__ void setup_particle_kernel(particle_t* particles, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr,
                         double tmax, double m, double q, double psi0, int nparticles){
-    int idx = threadIdx.x + blockIdx.x*blockDim.x;
-    int particle_id = idx / 6;
+    int idx = threadIdx.z + blockIdx.x*blockDim.z;
+    int particle_id = idx;
     if(particle_id < nparticles){
         setup_particle(particles[particle_id], srange_arr, trange_arr, zrange_arr, quadpts_arr, tmax, m, q, psi0);
     }
@@ -557,10 +595,12 @@ __global__ void build_state_kernel(particle_t* particles, int deriv_id, double* 
 
  
 __global__ void calc_derivs_kernel(particle_t* particles, int deriv_id, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr, double m, double q, double psi0, int nparticles){
-    int idx = threadIdx.x + blockIdx.x*blockDim.x;
-    int particle_id = idx / 6;
+    int idx = threadIdx.z + blockIdx.x*blockDim.z;
+    int particle_id = idx;
     if(particle_id < nparticles){
-        calc_derivs(particles[particle_id], particles[particle_id].derivs + 6*deriv_id, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, particles[particle_id].mu, psi0);
+        if(!particles[particle_id].is_done){
+            calc_derivs(particles[particle_id], particles[particle_id].derivs + 6*deriv_id, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, particles[particle_id].mu, psi0);
+        }
     }
 }
 
@@ -642,6 +682,7 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
         particles[i].v_perp = sqrt(vtotal*vtotal -  vtang_arr[i]*vtang_arr[i]);
         particles[i].v_total = vtotal;
         particles[i].has_left = false;
+        particles[i].is_done = false;
         particles[i].t = 0;
         
     }
@@ -671,11 +712,12 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
     cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(double));
     cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(double), cudaMemcpyHostToDevice);
 
-    int threads_per_particle = 6;
-    int threads_per_block = threads_per_particle*PARTICLES_PER_BLOCK;
+    // int threads_per_particle = 6;
+    // int threads_per_block = threads_per_particle*PARTICLES_PER_BLOCK;
+    dim3 interpolation_grid(6, 64, PARTICLES_PER_BLOCK);
     int interpolation_blocks = nparticles / PARTICLES_PER_BLOCK + 1;
 
-    setup_particle_kernel<<<interpolation_blocks, threads_per_block>>>(particles_d, srange_d, trange_d, zrange_d, quadpts_d, tmax, m, q, psi0, nparticles);
+    setup_particle_kernel<<<interpolation_blocks, interpolation_grid>>>(particles_d, srange_d, trange_d, zrange_d, quadpts_d, tmax, m, q, psi0, nparticles);
 
     // cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost);
 
@@ -696,8 +738,11 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
     
     int total_done = 0;
 
+    int counter = 0;
+
     while (total_done < nparticles){
-        fmt::print("number done = {}\n", total_done);
+        fmt::print("batch {} number done = {}\n", counter, total_done);
+        counter++;
          // double dt = 1e-5*0.5*M_PI/vtotal;
 
         for(int i=0; i<BATCH_SIZE; ++i){
@@ -710,7 +755,7 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
 
 
                 // cudaMemcpy(particles_d, particles, nparticles * sizeof(particle_t), cudaMemcpyHostToDevice);
-                calc_derivs_kernel<<<interpolation_blocks, threads_per_block>>>(particles_d, k, srange_d, trange_d, zrange_d, quadpts_d, m, q, psi0, nparticles); 
+                calc_derivs_kernel<<<interpolation_blocks, interpolation_grid>>>(particles_d, k, srange_d, trange_d, zrange_d, quadpts_d, m, q, psi0, nparticles); 
                 // cudaDeviceSynchronize();
                 // cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost);
                 // for(int p=0; p<nparticles; ++p){
@@ -742,7 +787,9 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
         count_done_kernel<<<nblks, nthreads>>>(particles_d, tmax, total_done_d, nparticles);
         cudaMemcpy(&total_done, total_done_d, sizeof(int), cudaMemcpyDeviceToHost);
 
-
+        if(counter > 1000){
+            break;
+        }
 
     }
 
