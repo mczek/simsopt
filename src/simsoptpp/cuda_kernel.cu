@@ -511,11 +511,20 @@ __device__   void trace_particle(particle_t& p, double* srange_arr, double* tran
         // p.state[3] = p.v_par;
 
         for(int k=0; k<7; ++k){
-            build_state(p, k, srange_arr, trange_arr, zrange_arr);
+            if(threadIdx.x % 6 == 0){
+                build_state(p, k, srange_arr, trange_arr, zrange_arr);
+            }
+            __syncthreads();
             calc_derivs(p, p.derivs + 6*k, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p.mu, psi0);
+            __syncthreads();
+
         }// std::cout << "k1 " << derivs[0] << "\t" << derivs[1] << "\t" << derivs[2] << "\t" << derivs[3] << "\n";
 
-        adjust_time(p, tmax);
+            
+        if(threadIdx.x % 6 == 0){
+            adjust_time(p, tmax);
+        }
+        __syncthreads();
 
         double s = sqrt(p.state[0]*p.state[0] + p.state[1]*p.state[1]);
         if(s >= 1){
@@ -533,8 +542,9 @@ __device__   void trace_particle(particle_t& p, double* srange_arr, double* tran
 __global__ void particle_trace_kernel(particle_t* particles, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr,
                         double tmax, double m, double q, double psi0, int nparticles){
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
-    if(idx < nparticles){
-        trace_particle(particles[idx], srange_arr, trange_arr, zrange_arr, quadpts_arr, tmax, m, q, psi0);
+    int particle_id = idx / 6;
+    if(particle_id < nparticles){
+        trace_particle(particles[particle_id], srange_arr, trange_arr, zrange_arr, quadpts_arr, tmax, m, q, psi0);
     }
 }
 
@@ -675,13 +685,13 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
     int threads_per_block = threads_per_particle*PARTICLES_PER_BLOCK;
     int interpolation_blocks = nparticles / PARTICLES_PER_BLOCK + 1;
 
-    setup_particle_kernel<<<interpolation_blocks, threads_per_block>>>(particles_d, srange_d, trange_d, zrange_d, quadpts_d, tmax, m, q, psi0, nparticles);
+    // setup_particle_kernel<<<interpolation_blocks, threads_per_block>>>(particles_d, srange_d, trange_d, zrange_d, quadpts_d, tmax, m, q, psi0, nparticles);
 
     // cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost);
 
     
-    int* total_done_d;
-    cudaMalloc((void**)&total_done_d, sizeof(int));
+    // int* total_done_d;
+    // cudaMalloc((void**)&total_done_d, sizeof(int));
     // cudaMemset(total_done_d, 0, sizeof(int));
     // count_done_kernel<<<nblks, nthreads>>>(particles_d, tmax, total_done_d, nparticles);
 
@@ -694,57 +704,59 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
     cudaEventCreate(&stop);
     cudaEventRecord(start);
     
-    int total_done = 0;
+    particle_trace_kernel<<<interpolation_blocks, threads_per_block>>>(particles_d, srange_d, trange_d, zrange_d, quadpts_d, tmax, m, q, psi0, nparticles);
 
-    while (total_done < nparticles){
-        fmt::print("number done = {}\n", total_done);
-         // double dt = 1e-5*0.5*M_PI/vtotal;
+    // int total_done = 0;
 
-        for(int i=0; i<BATCH_SIZE; ++i){
-            // advance 1 step
-            for(int k=0; k<7; ++k){
-                // cudaMemcpy(particles_d, particles, nparticles * sizeof(particle_t), cudaMemcpyHostToDevice);
-                build_state_kernel<<<nblks, nthreads>>>(particles_d, k, srange_d, trange_d, zrange_d, nparticles); 
-                // cudaDeviceSynchronize();
-                // cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost);
+    // while (total_done < nparticles){
+    //     fmt::print("number done = {}\n", total_done);
+    //      // double dt = 1e-5*0.5*M_PI/vtotal;
+
+    //     for(int i=0; i<BATCH_SIZE; ++i){
+    //         // advance 1 step
+    //         for(int k=0; k<7; ++k){
+    //             // cudaMemcpy(particles_d, particles, nparticles * sizeof(particle_t), cudaMemcpyHostToDevice);
+    //             build_state_kernel<<<nblks, nthreads>>>(particles_d, k, srange_d, trange_d, zrange_d, nparticles); 
+    //             // cudaDeviceSynchronize();
+    //             // cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost);
 
 
-                // cudaMemcpy(particles_d, particles, nparticles * sizeof(particle_t), cudaMemcpyHostToDevice);
-                calc_derivs_kernel<<<interpolation_blocks, threads_per_block>>>(particles_d, k, srange_d, trange_d, zrange_d, quadpts_d, m, q, psi0, nparticles); 
-                // cudaDeviceSynchronize();
-                // cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost);
-                // for(int p=0; p<nparticles; ++p){
-                // // std::cout << "tracing particle " << p << std::endl;
+    //             // cudaMemcpy(particles_d, particles, nparticles * sizeof(particle_t), cudaMemcpyHostToDevice);
+    //             calc_derivs_kernel<<<interpolation_blocks, threads_per_block>>>(particles_d, k, srange_d, trange_d, zrange_d, quadpts_d, m, q, psi0, nparticles); 
+    //             // cudaDeviceSynchronize();
+    //             // cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost);
+    //             // for(int p=0; p<nparticles; ++p){
+    //             // // std::cout << "tracing particle " << p << std::endl;
  
-                //     // build_state(particles[p], k);
-                //     calc_derivs(particles[p].x_temp, particles[p].derivs + 6*k, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, particles[p].mu, psi0);
-                // }
-                // adjust_time(particles[p], tmax);
+    //             //     // build_state(particles[p], k);
+    //             //     calc_derivs(particles[p].x_temp, particles[p].derivs + 6*k, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, particles[p].mu, psi0);
+    //             // }
+    //             // adjust_time(particles[p], tmax);
 
 
 
 
-            }
+    //         }
 
 
 
-            // cudaMemcpy(particles_d, particles, nparticles * sizeof(particle_t), cudaMemcpyHostToDevice);
-            adjust_time_kernel<<<nblks, nthreads>>>(particles_d, tmax, nparticles);
-            // cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost);
-        }
+    //         // cudaMemcpy(particles_d, particles, nparticles * sizeof(particle_t), cudaMemcpyHostToDevice);
+    //         adjust_time_kernel<<<nblks, nthreads>>>(particles_d, tmax, nparticles);
+    //         // cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost);
+    //     }
 
-        // total_done = 0;
-        // for(int i=0; i<nparticles; ++i){
-        //     total_done += (int) (particles[i].has_left || (particles[i].t >= tmax));
-        // }
+    //     // total_done = 0;
+    //     // for(int i=0; i<nparticles; ++i){
+    //     //     total_done += (int) (particles[i].has_left || (particles[i].t >= tmax));
+    //     // }
 
-        cudaMemset(total_done_d, 0, sizeof(int));
-        count_done_kernel<<<nblks, nthreads>>>(particles_d, tmax, total_done_d, nparticles);
-        cudaMemcpy(&total_done, total_done_d, sizeof(int), cudaMemcpyDeviceToHost);
+    //     cudaMemset(total_done_d, 0, sizeof(int));
+    //     count_done_kernel<<<nblks, nthreads>>>(particles_d, tmax, total_done_d, nparticles);
+    //     cudaMemcpy(&total_done, total_done_d, sizeof(int), cudaMemcpyDeviceToHost);
 
 
 
-    }
+    // }
 
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
