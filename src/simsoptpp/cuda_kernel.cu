@@ -183,7 +183,7 @@ __host__  __device__ void calc_derivs(particle_t& p, double* out, double* srange
         interpolants[3] *= -1.0;
     }
 
-    printf("modB=%.15e, modB_derivs=%.15e, %.15e, %.15e, G=%.15e, iota=%.15e\n", interpolants[0], interpolants[1], interpolants[2], interpolants[3], interpolants[4], interpolants[5]);
+    // printf("modB=%.15e, modB_derivs=%.15e, %.15e, %.15e, G=%.15e, iota=%.15e\n", interpolants[0], interpolants[1], interpolants[2], interpolants[3], interpolants[4], interpolants[5]);
     // fmt::print("modB ={}, modB derivs={} {} {}, G={}, iota={}\n", interpolants[0], interpolants[1], interpolants[2], interpolants[3], interpolants[4], interpolants[5]);
     // std::cout << "\n";
 
@@ -273,7 +273,7 @@ __host__ __device__ void build_state(particle_t& p, int deriv_id, double* srange
         }
     } 
 
-    printf("deriv pt: %.15e, %.15e, %.15e, %.15e\n", p.x_temp[0], p.x_temp[1], p.x_temp[2], p.x_temp[3]);
+    // printf("deriv pt: %.15e, %.15e, %.15e, %.15e\n", p.x_temp[0], p.x_temp[1], p.x_temp[2], p.x_temp[3]);
 
 
     double s = sqrt(p.x_temp[0]*p.x_temp[0] + p.x_temp[1]*p.x_temp[1]);
@@ -331,7 +331,7 @@ __host__ __device__ void build_state(particle_t& p, int deriv_id, double* srange
     p.j = 3*((int) ((t - trange_arr[0]) / theta_grid_size) / 3);
     p.k = 3*((int) ((z - zrange_arr[0]) / zeta_grid_size) / 3);
 
-    printf("i=%d, j=%d, k=%d\n", p.i, p.j, p.k);
+    //printf("i=%d, j=%d, k=%d\n", p.i, p.j, p.k);
 
 
     p.i = min(p.i, (int)srange_arr[2]-4);
@@ -386,20 +386,26 @@ __host__ __device__ void adjust_time(particle_t& p, double tmax){
     // Compute  error
     // https://live.boost.org/doc/libs/1_82_0/libs/numeric/odeint/doc/html/boost_numeric_odeint/odeint_in_detail/steppers.html
     // resolve typo in boost docs: https://numerical.recipes/book.html
-    double tol=1e-9;
+    double atol=1e-9;
+    double rtol=1e-9;
     // // std::cout << "error elts \n";
     double err = 0.0;
     bool accept = true;
     for (int i = 0; i < 4; i++) {
         p.x_err[i] = p.dt*(bhat1 * p.derivs[i] + bhat3 * p.derivs[12+i] + bhat4 * p.derivs[18+i] + bhat5 * p.derivs[24+i] + bhat6 * p.derivs[30+i] + bhat7 * p.derivs[36+i]);
-        printf("raw error: %.15e\n", p.x_err[i]);
-        p.x_err[i] = fabs(p.x_err[i]) / tol*(fabs(p.state[i]) + p.dt*fabs(p.derivs[i]));      
+        //printf("raw error: %.15e\tnumerator: %.15e\tdenominator: %.15e\n", p.x_err[i], fabs(p.x_err[i]), (atol + rtol*(fabs(p.state[i]) + p.dt*fabs(p.derivs[i]))));
+       
+        if(i==3){
+            atol *= 1e5;
+        }
+        p.x_err[i] = fabs(p.x_err[i]) / (atol + rtol*(fabs(p.state[i]) + p.dt*fabs(p.derivs[i])));      
         // // std::cout << std::abs(x_err[i]) << "\n";
         err = fmax(err, p.x_err[i]);
+        //printf("running max err: %.15e\n", err);
     }
-    printf("state elements: %.15e, %.15e, %.15e, %.15e\n", p.state[0], p.state[1], p.state[2], p.state[3]);
-    printf("deriv elements: %.15e, %.15e, %.15e, %.15e\n", p.derivs[0], p.derivs[1], p.derivs[2], p.derivs[3]);
-    printf("error elements: %.15e, %.15e, %.15e, %.15e\n", p.x_err[0], p.x_err[1], p.x_err[2], p.x_err[3]);
+    //printf("state elements: %.15e, %.15e, %.15e, %.15e\n", p.state[0], p.state[1], p.state[2], p.state[3]);
+    //printf("deriv elements: %.15e, %.15e, %.15e, %.15e\n", p.derivs[0], p.derivs[1], p.derivs[2], p.derivs[3]);
+    //printf("error elements: %.15e, %.15e, %.15e, %.15e\n", p.x_err[0], p.x_err[1], p.x_err[2], p.x_err[3]);
 
     // // std::cout << "err= " << err << "\n";
 
@@ -417,7 +423,7 @@ __host__ __device__ void adjust_time(particle_t& p, double tmax){
     // dt_new = std::max(dt_new, 1e-9); // Limit smallest step size
     // // std::cout << "dt_new= " << dt_new << "\t dt=" << dt << "\n";
     p.step_attempt++;
-    printf("t=%.15e, err=%.15e, position %.15e, %.15e, %.15e, %.15e, dt=%.15e, dt_new=%.15e\n", p.t, err, p.state[0], p.state[1], p.state[2], p.state[3], p.dt, dt_new);
+    //printf("t=%.15e, err=%.15e, position %.15e, %.15e, %.15e, %.15e, dt=%.15e, dt_new=%.15e\n", p.t, err, p.state[0], p.state[1], p.state[2], p.state[3], p.dt, dt_new);
     if (err <= 1.0) {
         // // std::cout << "point accepted\n";
         // Accept the step
@@ -452,7 +458,7 @@ __host__ __device__    void trace_particle(particle_t& p, double* srange_arr, do
 
 
     while(p.t < tmax){
-        printf("particle %d position %.15e, %.15e, %.15e, %.15e, dt=%.15e\n", p.id, p.state[0], p.state[1], p.state[2], p.state[3], p.dt);
+        //printf("particle %d position %.15e, %.15e, %.15e, %.15e, dt=%.15e\n", p.id, p.state[0], p.state[1], p.state[2], p.state[3], p.dt);
 
 
         // if(counter > 1000000){
@@ -732,9 +738,21 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
     int nthreads = 256;
     int nblks = nparticles / nthreads + 1;
     std::cout << "starting particle tracing kernel\n";
+
+       
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+    cudaEventRecord(start);
     particle_trace_kernel<<<nblks, nthreads>>>(particles_d, srange_d, trange_d, zrange_d, quadpts_d, tmax, m, q, psi0, nparticles);
 
     cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost);
+
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+    float milliseconds = 0;
+    cudaEventElapsedTime(&milliseconds, start, stop);
+    std::cout << "tracing kernels time (ms): " << milliseconds<< "\n";
 
     // for(int i=0; i<nparticles; ++i){
     //     std::cout << "tracing particle " << i << std::endl;
