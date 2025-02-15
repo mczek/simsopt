@@ -371,7 +371,7 @@ __host__ __device__ void setup_particle(particle_t& p, double* srange_arr, doubl
     p.mu = p.v_perp*p.v_perp/(2*p.derivs[4]);
 
         // dtmax = 0.5*M_PI*G / (modB*vtotal)
-    p.dtmax = 0.5*M_PI*p.derivs[5] / (p.derivs[4]*p.v_total);
+    p.dtmax = 0.5*M_PI*abs(p.derivs[5]) / (p.derivs[4]*p.v_total);
     p.dt = 1e-3*p.dtmax;
 
 }
