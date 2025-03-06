@@ -205,7 +205,7 @@ def test_interpolant_bfield(n_metagrid_pts):
 
     print(np.abs(simsopt_interpolation - new_interpolation) / simsopt_interpolation)
     diff =np.max(np.abs(simsopt_interpolation - new_interpolation) / simsopt_interpolation)
-    print("Maximum difference in interpolation values on {} points: {}".format(n_test_pts, diff))
+    print("Maximum relative error in interpolation values on {} points: {}".format(n_test_pts, diff))
 
 
 

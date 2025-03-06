@@ -33,7 +33,7 @@ typedef struct particle_t {
     double dtmax;
     double t;
     double mu;
-    double derivs[42];
+    double derivs[42] = {0.0};
     // double k2[6], k3[6], k4[6], k5[6], k6[6], k7[6];   
     double x_temp[4], x_err[4];
     double s_shape[4], t_shape[4], z_shape[4];
@@ -216,9 +216,13 @@ __host__ __device__ void build_state(particle_t& p, int deriv_id, double* srange
     // const double bhat1 = 71.0 / 57600.0, bhat3 = -71.0 / 16695.0, bhat4 = 71.0 / 1920.0, bhat5 = -17253.0 / 339200.0, bhat6 = 22.0 / 525.0, bhat7 = -1.0 / 40.0;
 
     double wgts[6] = {0.0}; 
+    // printf("state=%.15e, %.15e, %.15e\n", p.state[0], p.state[1], p.state[2]);
+
     for (int i = 0; i < 4; i++) {
         p.x_temp[i] = p.state[i];
     }
+    // printf("xtemp=%.15e, %.15e, %.15e\n", p.x_temp[0], p.x_temp[1], p.x_temp[2]);
+
     switch(deriv_id){
         case 0:
             // wgts = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
@@ -265,15 +269,19 @@ __host__ __device__ void build_state(particle_t& p, int deriv_id, double* srange
             break;
     }
 
+    // printf("deriv pt first: %.15e, %.15e, %.15e, %.15e, %.15e\n", p.dt, p.x_temp[0], p.x_temp[1], p.x_temp[2], p.x_temp[3]);
+    // printf("wgts: %.15e, %.15e, %.15e, %.15e, %.15e, %.15e\n", wgts[0], wgts[1], wgts[2], wgts[3], wgts[4], wgts[5]);
 
 
     for (int j=0; j<6; ++j){
         for(int i=0; i<4; ++i){
+            // printf("contribution: %.15e, %.15e, %.15e, %.15e\n", p.dt, wgts[j], p.derivs[6*j+i], p.dt * wgts[j] * p.derivs[6*j+i]);
             p.x_temp[i] += p.dt * wgts[j] * p.derivs[6*j+i];
         }
     } 
 
-    // printf("deriv pt: %.15e, %.15e, %.15e, %.15e\n", p.x_temp[0], p.x_temp[1], p.x_temp[2], p.x_temp[3]);
+
+    // printf("deriv pt second: %.15e, %.15e, %.15e, %.15e\n", p.x_temp[0], p.x_temp[1], p.x_temp[2], p.x_temp[3]);
 
 
     double s = sqrt(p.x_temp[0]*p.x_temp[0] + p.x_temp[1]*p.x_temp[1]);
@@ -602,6 +610,16 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
         particles[i].step_accept = 0;
         particles[i].step_attempt = 0;
         particles[i].id = i;
+
+        // ensure data is initialized
+        // particles[i].derivs = {0.0};
+        // particles[i].x_temp = {0.0};
+        // particles[i].x_err = {0.0};
+        // particles[i].s_shape = {0.0};
+        // particles[i].t_shape = {0.0};
+        // particles[i].z_shape = {0.0};
+        // particles[i].interpolation_loc = {0.0};
+
     }
 
     // int nthreads = 256;
@@ -778,91 +796,10 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
         particle_output[7*i + 6] = particles[i].step_attempt;
     }
 
+
     delete[] particles;
 
     return particle_output;
-}
-
-
- __device__ __forceinline__ void gpu_interpolate(double* loc, double* data, double* out, double* srange_arr, double* trange_arr, double* zrange_arr, int n){
-    int ns = srange_arr[2];
-    int nt = trange_arr[2];
-    int nz = zrange_arr[2];
-
-    // Need to interpolate modB, modB derivs, G, and iota
-
-    // arrays to hold weights for interpolation    
-    double s_shape[4];
-    double t_shape[4];
-    double z_shape[4];
-
-    /*
-    * index into the grid and calculate weights
-    */ 
-    double s_grid_size = (srange_arr[1]-srange_arr[0]) / (srange_arr[2]-1);
-    double theta_grid_size = (trange_arr[1]-trange_arr[0]) / (trange_arr[2]-1);
-    double zeta_grid_size = (zrange_arr[1]-zrange_arr[0]) / (zrange_arr[2]-1);
-
-    // Get Boozer coordinates of current position
-    double s = loc[0];
-    double t = loc[1];
-    double z = loc[2];
-
-    // index into mesh to obtain nearby points
-    // get correct "meta grid" for continuity
-    // keeping stz order
-
-    int i = 3*((int) ((s - srange_arr[0]) / s_grid_size) / 3);
-    int j = 3*((int) ((t - trange_arr[0]) / theta_grid_size) / 3);
-    int k = 3*((int) ((z - zrange_arr[0]) / zeta_grid_size) / 3);
-
-
-    i = min(i, (int)srange_arr[2]-4);
-    j = min(j, (int)trange_arr[2]-4);
-    k = min(k, (int)zrange_arr[2]-4);
-
-    // normalized positions in local grid wrt e.g. r at index i
-    // maps the position to [0,3] in the "meta grid"
-
-    double s_rel = (s -  i*s_grid_size - srange_arr[0]) / s_grid_size;
-    double theta_rel = (t -  j*theta_grid_size - trange_arr[0]) / theta_grid_size;
-    double zeta_rel = (z - k*zeta_grid_size - zrange_arr[0]) / zeta_grid_size;
-
-    // fill shape vectors
-    // this isn't particularly efficient
-    shape(s_rel, s_shape);
-    shape(theta_rel, t_shape);
-    shape(zeta_rel, z_shape);
-
-    /*
-    From here it remains to perform the necessary interpolations
-    As opposed to Cartesian coordinates, we don't need to monitor the surface dist via interpolation
-    We also don't need to calculate the derivative of any of the interpolations
-    This lets us interpolate everything in one set of nested loops 
-    */
-
-    // store interpolants in a common array, indexed the same as the columns of the quad info
-    // modB, derivs of modB, G, iota
-
-    // // quad pts are indexed s t z
-    for(int ii=0; ii<=3; ++ii){ // s grid
-        if((i+ii) < ns){
-            for(int jj=0; jj<=3; ++jj){ // theta grid           
-                int wrap_j = (j+jj) % nt;
-                for(int kk=0; kk<=3; ++kk){ // zeta grid
-                    int wrap_k = (k+kk) % nz;
-                    int row_idx = (i+ii)*nt*nz + wrap_j*nz + wrap_k;
-                    
-                    double shape_val = s_shape[ii]*t_shape[jj]*z_shape[kk];
-                    for(int zz=0; zz<n; ++zz){
-                        out[zz] += data[n*row_idx + zz]*shape_val;
-
-                    }
-                }
-            }
-        }
-    }
-
 }
 
 __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* srange, double* trange, double* zrange, double* loc, double* out, int n, int n_points){
@@ -871,33 +808,54 @@ __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* srange, 
         double* loc_arr = loc + 3*idx;
         double* out_arr  =  out + idx*n;
          // double s = loc_arr[0];
-        double t = loc_arr[1];
-        double z = loc_arr[2];
-        // we want to exploit periodicity in the B-field, but leave sine(theta) unchanged
-        t = fmod(t, 2*M_PI);
-        t += 2*M_PI*(t < 0);
+        // double t = loc_arr[1];
+        // double z = loc_arr[2];
+        // // we want to exploit periodicity in the B-field, but leave sine(theta) unchanged
+        // t = fmod(t, 2*M_PI);
+        // t += 2*M_PI*(t < 0);
 
-        // we can modify z because it's only used to access the B-field location
-        double period = zrange[1];
-        z = fmod(z, period);
-        z += period*(z < 0);
+        // // we can modify z because it's only used to access the B-field location
+        // double period = zrange[1];
+        // z = fmod(z, period);
+        // z += period*(z < 0);
 
         
-        // exploit stellarator symmetry
-        bool symmetry_exploited = t > M_PI;
-        if(symmetry_exploited){
-            z = period - z;
-            t = 2*M_PI - t;
-        }
-        loc_arr[1] = t;
-        loc_arr[2] = z;
+        // // exploit stellarator symmetry
+        // bool symmetry_exploited = t > M_PI;
+        // if(symmetry_exploited){
+        //     z = period - z;
+        //     t = 2*M_PI - t;
+        // }
+        // loc_arr[1] = t;
+        // loc_arr[2] = z;
 
-        gpu_interpolate(loc_arr, quad_pts, out_arr, srange, trange, zrange, n);
+        particle_t p;
+        double s = loc_arr[0];
+        double t = loc_arr[1];
+        double z = loc_arr[2];
 
-        if(symmetry_exploited){
+        p.state[0] = s*cos(t);
+        p.state[1] = s*sin(t);
+        p.state[2] = z;
+
+        p.dt = 1e-3; //needed for build_state
+
+        // printf("s=%.15e, t=%.15e, z=%.15e\n", s, t, z);
+        // printf("y1=%.15e, y2=%.15e, z=%.15e\n", p.state[0], p.state[1], p.state[2]);
+        build_state(p, 0, srange, trange, zrange);
+        // printf("xtemp=%.15e, %.15e, %.15e\n", p.x_temp[0], p.x_temp[1], p.x_temp[2]);
+
+        interpolate(p, quad_pts, out_arr, srange, trange, zrange, n);
+
+        // printf("modB=%.15e, modB_derivs=%.15e, %.15e, %.15e, G=%.15e, iota=%.15e\n", out_arr[0], out_arr[1], out_arr[2], out_arr[3], out_arr[4], out_arr[5]);
+
+
+        if(p.symmetry_exploited){
             out_arr[2] *= -1.0;
             out_arr[3] *= -1.0;
         }
+
+
 
     }
 }
