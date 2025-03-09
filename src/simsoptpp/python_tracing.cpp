@@ -19,7 +19,7 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
 extern "C" py::array_t<double> test_interpolation(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, int n);
 extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, int n, int n_points);
 
-extern "C" py::array_t<double> test_derivatives(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, double v_par, double v_total, double m, double q, double psi0);
+extern "C" py::array_t<double> test_derivatives(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, py::array_t<double> vpar, double v_total, double m, double q, double psi0, int n_points);
 
 void init_tracing(py::module_ &m){
 
@@ -115,11 +115,12 @@ void init_tracing(py::module_ &m){
         py::arg("trange"),
         py::arg("zrange"),
         py::arg("loc"),
-        py::arg("v_par"),
+        py::arg("vpar"),
         py::arg("v_total"),
         py::arg("m"),
         py::arg("q"),
-        py::arg("psi0")
+        py::arg("psi0"),
+        py::arg("n_points")
         );
 
 

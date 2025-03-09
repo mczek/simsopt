@@ -31,7 +31,7 @@ def test_derivs(n_metagrid_pts):
         field = InterpolatedBoozerField(bri, degree, srange, thetarange, zetarange, True, nfp=nfp, stellsym=True)
 
         # generate test points
-        n_test_pts = 10000
+        n_test_pts = 100000
         s = np.random.uniform(low=0, high=1, size=(n_test_pts,1))
         t = np.random.uniform(low=0, high=2*np.pi, size=(n_test_pts,1))
         z = np.random.uniform(low=0, high=2*np.pi, size=(n_test_pts,1))
@@ -91,17 +91,19 @@ def test_derivs(n_metagrid_pts):
         # print(interpolated_values)
 
         print("calculating new derivatives")
-        new_derivs = np.empty((n_test_pts, 4))
-        for i in range(n_test_pts):
-                new_derivs[i,:] = sopp.test_derivatives(quad_info, srange, trange, zrange, stz[i,:], vpar_init[i], VELOCITY, MASS, CHARGE, psi0)
+        # new_derivs = np.empty((n_test_pts, 4))
+        # for i in range(n_test_pts):
+        #         new_derivs[i,:] = sopp.test_derivatives(quad_info, srange, trange, zrange, stz[i,:], vpar_init[i], VELOCITY, MASS, CHARGE, psi0)
 
+        new_derivs = sopp.test_derivatives(quad_info, srange, trange, zrange, stz, vpar_init, VELOCITY, MASS, CHARGE, psi0, stz.shape[0])
+        new_derivs = np.reshape(new_derivs, (stz.shape[0], 4))
 
         print("simsopt derivatives: ", old_derivs)
         print("new derivatives: ", new_derivs)
         diff = np.max(np.abs(old_derivs - new_derivs) / old_derivs)
         print("diff=", diff)
         # print(stz)
-        print("Maximum difference in derivatives values on {} points: {}".format(n_test_pts, diff))
+        print("Maximum relative error in derivative values on {} points: {}".format(n_test_pts, diff))
 
 
 

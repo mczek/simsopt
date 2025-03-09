@@ -170,9 +170,12 @@ __host__  __device__ void calc_derivs(particle_t& p, double* out, double* srange
 
     
    
-
+    // printf("interpolation loc: %.15e, %.15e, %.15e\n", p.interpolation_loc[0], p.interpolation_loc[1], p.interpolation_loc[2]);
 
     interpolate(p, quadpts_arr, interpolants, srange_arr, trange_arr, zrange_arr, 6);
+
+    // printf("interpolants:  %.15e, %.15e, %.15e, %.15e, %.15e, %.15e\n", interpolants[0], interpolants[1], interpolants[2], interpolants[3], interpolants[4], interpolants[5]);
+
     
     double s = sqrt(p.x_temp[0]*p.x_temp[0] + p.x_temp[1]*p.x_temp[1]);
     double theta = atan2(p.x_temp[1], p.x_temp[0]);
@@ -182,17 +185,23 @@ __host__  __device__ void calc_derivs(particle_t& p, double* out, double* srange
         interpolants[2] *= -1.0;
         interpolants[3] *= -1.0;
     }
+    // printf("s=%.15e, theta=%.15e, zeta=%.15e, vpar=%.15e\n", s, theta, z, v_par);
+    // printf("interpolants:  %.15e, %.15e, %.15e, %.15e, %.15e, %.15e\n", interpolants[0], interpolants[1], interpolants[2], interpolants[3], interpolants[4], interpolants[5]);
 
     // printf("modB=%.15e, modB_derivs=%.15e, %.15e, %.15e, G=%.15e, iota=%.15e\n", interpolants[0], interpolants[1], interpolants[2], interpolants[3], interpolants[4], interpolants[5]);
     // fmt::print("modB ={}, modB derivs={} {} {}, G={}, iota={}\n", interpolants[0], interpolants[1], interpolants[2], interpolants[3], interpolants[4], interpolants[5]);
     // std::cout << "\n";
 
     // fmt::print("m={}, v_par={}, mu={}\n", m, v_par, mu);
+    // printf("m=%.15e, mu=%.15e, psi0=%.15e, q=%.15e\n", m, mu, psi0, q);
+
     double fak1 = m*v_par*v_par/interpolants[0] + m*mu;
     double sdot = -interpolants[2]*fak1 / (q*psi0);
     double tdot = interpolants[1]*fak1 / (q*psi0) + interpolants[5]*v_par*interpolants[0]/interpolants[4];
 
     // fmt::print("fak1={}, sdot={}, tdot={}\n", fak1, sdot, tdot);
+
+    // printf("fak1=%.15e, sdot=%.15e, tdot=%.15e\n", fak1, sdot, tdot);
 
     out[0] = sdot*cos(theta) - s*sin(theta)*tdot;
     out[1] = sdot*sin(theta) + s*cos(theta)*tdot;
@@ -202,6 +211,8 @@ __host__  __device__ void calc_derivs(particle_t& p, double* out, double* srange
     // fmt::print("derivs = {} {} {} {}\n\n", out[0], out[1], out[2], out[3]);
     out[4] = interpolants[0]; // modB
     out[5] = interpolants[4]; // G
+
+    // printf("calc_derivs out vals: %.15e, %.15e, %.15e, %.15e, %.15e, %.15e\n", out[0], out[1], out[2], out[3], out[4], out[5]);
 
 }
 
@@ -275,7 +286,7 @@ __host__ __device__ void build_state(particle_t& p, int deriv_id, double* srange
 
     for (int j=0; j<6; ++j){
         for(int i=0; i<4; ++i){
-            // printf("contribution: %.15e, %.15e, %.15e, %.15e\n", p.dt, wgts[j], p.derivs[6*j+i], p.dt * wgts[j] * p.derivs[6*j+i]);
+            // printf("contribution: %.15e, %.15e, %.15e, %.15e, %.15e, %.15e, %.15e\n", p.dt, wgts[j], p.derivs[6*j+i], p.dt * wgts[j], wgts[j] * p.derivs[6*j+i], p.dt * p.derivs[6*j+i], p.dt * wgts[j] * p.derivs[6*j+i]);
             p.x_temp[i] += p.dt * wgts[j] * p.derivs[6*j+i];
         }
     } 
@@ -364,7 +375,10 @@ __host__ __device__ void setup_particle(particle_t& p, double* srange_arr, doubl
                          double tmax, double m, double q, double psi0){
                              // double mu;
     p.t = 0.0;
+    p.dt = 0.0;
     build_state(p, 0, srange_arr, trange_arr, zrange_arr);
+
+    // printf("post build_state interpolation_loc: %.15e, %.15e, %.15e\n", p.interpolation_loc[0], p.interpolation_loc[1], p.interpolation_loc[2]);
 
     // p.state[0] = p.y1;
     // p.state[1] = p.y2;
@@ -376,11 +390,23 @@ __host__ __device__ void setup_particle(particle_t& p, double* srange_arr, doubl
     // dummy call to get norm B
     // std::cout << "dummy call to calc_derivs \n";
     calc_derivs(p, p.derivs, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, -1, psi0);
-    p.mu = p.v_perp*p.v_perp/(2*p.derivs[4]);
+    
+    // printf("setting mu: %.15e, %.15e, %.15e, %.15e, %.15e\n", p.mu, p.v_perp, p.v_perp*p.v_perp, 2*p.derivs[4], p.v_perp*p.v_perp / 2*p.derivs[4]);
+    // printf("derivs[4]: %.15e\n", p.derivs[4]);
+
+    double v_perp2 = p.v_perp*p.v_perp;
+    double denom = 1 / (2*p.derivs[4]);
+    p.mu = v_perp2 * denom;
+    // printf("derivs[4]: %.15e, %.15e, %.15e, %.15e\n", p.derivs[4], v_perp2, denom, v_perp2*denom);
+    
+
+    // printf("setting mu: %.15e, %.15e, %.15e, %.15e, %.15e, %.15e\n", p.mu, p.v_perp, p.v_perp*p.v_perp, p.derivs[4], p.v_perp*p.v_perp/(2*p.derivs[4]), (p.v_perp*p.v_perp)/(2*p.derivs[4]));
 
         // dtmax = 0.5*M_PI*G / (modB*vtotal)
     p.dtmax = 0.5*M_PI*abs(p.derivs[5]) / (p.derivs[4]*p.v_total);
     p.dt = 1e-3*p.dtmax;
+
+    // printf("dtmax=%.15e, dt=%.15e, G=%.15e, modB=%.15e, v_total=%.15e\n", p.dtmax, p.dt, p.derivs[5], p.derivs[4], p.v_total);
 
 }
 
@@ -610,7 +636,8 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
         particles[i].step_accept = 0;
         particles[i].step_attempt = 0;
         particles[i].id = i;
-
+        
+        // particles[i].dt = 0.0; //initialize to zero for build_state
         // ensure data is initialized
         // particles[i].derivs = {0.0};
         // particles[i].x_temp = {0.0};
@@ -802,32 +829,64 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
     return particle_output;
 }
 
+extern "C" py::array_t<double> test_interpolation(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, int n){
+    py::buffer_info quadpts_buf = quad_pts.request();
+    double* quadpts_arr = static_cast<double*>(quadpts_buf.ptr);
+
+    py::buffer_info s_buf = srange.request();
+    double* srange_arr = static_cast<double*>(s_buf.ptr);
+
+    py::buffer_info t_buf = trange.request();
+    double* trange_arr = static_cast<double*>(t_buf.ptr);
+
+    py::buffer_info z_buf = zrange.request();
+    double* zrange_arr = static_cast<double*>(z_buf.ptr);
+
+    py::buffer_info loc_buf = loc.request();
+    double* loc_arr = static_cast<double*>(loc_buf.ptr);
+
+    double out[n];
+
+    // double s = loc_arr[0];
+    double t = loc_arr[1];
+    double z = loc_arr[2];
+    // we want to exploit periodicity in the B-field, but leave sine(theta) unchanged
+    t = fmod(t, 2*M_PI);
+    t += 2*M_PI*(t < 0);
+
+    // we can modify z because it's only used to access the B-field location
+    double period = zrange_arr[1];
+    z = fmod(z, period);
+    z += period*(z < 0);
+
+    
+    // exploit stellarator symmetry
+    bool symmetry_exploited = t > M_PI;
+    if(symmetry_exploited){
+        z = period - z;
+        t = 2*M_PI - t;
+    }
+    loc_arr[1] = t;
+    loc_arr[2] = z;
+
+    // interpolate(loc_arr, quadpts_arr, out, srange_arr, trange_arr, zrange_arr, n);
+
+
+    if(symmetry_exploited){
+        out[2] *= -1.0;
+        out[3] *= -1.0;
+    }
+
+    auto result = py::array_t<double>(n, out);
+    return result;
+
+}
+
 __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* srange, double* trange, double* zrange, double* loc, double* out, int n, int n_points){
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
     if(idx < n_points){
         double* loc_arr = loc + 3*idx;
         double* out_arr  =  out + idx*n;
-         // double s = loc_arr[0];
-        // double t = loc_arr[1];
-        // double z = loc_arr[2];
-        // // we want to exploit periodicity in the B-field, but leave sine(theta) unchanged
-        // t = fmod(t, 2*M_PI);
-        // t += 2*M_PI*(t < 0);
-
-        // // we can modify z because it's only used to access the B-field location
-        // double period = zrange[1];
-        // z = fmod(z, period);
-        // z += period*(z < 0);
-
-        
-        // // exploit stellarator symmetry
-        // bool symmetry_exploited = t > M_PI;
-        // if(symmetry_exploited){
-        //     z = period - z;
-        //     t = 2*M_PI - t;
-        // }
-        // loc_arr[1] = t;
-        // loc_arr[2] = z;
 
         particle_t p;
         double s = loc_arr[0];
@@ -859,6 +918,8 @@ __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* srange, 
 
     }
 }
+
+
 
 extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, int n, int n_points){
     py::buffer_info quadpts_buf = quad_pts.request();
@@ -924,61 +985,54 @@ extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_p
 
 }
 
-extern "C" py::array_t<double> test_interpolation(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, int n){
-    py::buffer_info quadpts_buf = quad_pts.request();
-    double* quadpts_arr = static_cast<double*>(quadpts_buf.ptr);
 
-    py::buffer_info s_buf = srange.request();
-    double* srange_arr = static_cast<double*>(s_buf.ptr);
+__global__ void test_gpu_derivs_kernel(double* quad_pts, double* srange, double* trange, double* zrange, double* loc, double* vpar, double vtotal, double* out, double m, double q, double psi0, int n_points){
+    int idx = threadIdx.x + blockIdx.x*blockDim.x;
+    if(idx < n_points){
+        double* loc_arr = loc + 3*idx;
+        double* out_arr  =  out + 4*idx;
+        double vpar_val = vpar[idx];
 
-    py::buffer_info t_buf = trange.request();
-    double* trange_arr = static_cast<double*>(t_buf.ptr);
+        particle_t p;
+        double s = loc_arr[0];
+        double t = loc_arr[1];
+        double z = loc_arr[2];
 
-    py::buffer_info z_buf = zrange.request();
-    double* zrange_arr = static_cast<double*>(z_buf.ptr);
+        p.state[0] = s*cos(t);
+        p.state[1] = s*sin(t);
+        p.state[2] = z;
+        p.state[3] = vpar_val;
+        p.v_total = vtotal;
+        p.v_perp = sqrt(vtotal*vtotal -  vpar_val*vpar_val);
 
-    py::buffer_info loc_buf = loc.request();
-    double* loc_arr = static_cast<double*>(loc_buf.ptr);
 
-    double out[n];
+        // printf("state:  %.15e, %.15e, %.15e, %.15e\n", p.state[0], p.state[1], p.state[2], p.state[3]);
 
-    // double s = loc_arr[0];
-    double t = loc_arr[1];
-    double z = loc_arr[2];
-    // we want to exploit periodicity in the B-field, but leave sine(theta) unchanged
-    t = fmod(t, 2*M_PI);
-    t += 2*M_PI*(t < 0);
+        setup_particle(p, srange, trange, zrange, quad_pts, 1e-2, m, q, psi0);
+        // printf("state:  %.15e, %.15e, %.15e, %.15e\n", p.state[0], p.state[1], p.state[2], p.state[3]);
 
-    // we can modify z because it's only used to access the B-field location
-    double period = zrange_arr[1];
-    z = fmod(z, period);
-    z += period*(z < 0);
+        // printf("s=%.15e, t=%.15e, z=%.15e\n", s, t, z);
+        // printf("y1=%.15e, y2=%.15e, z=%.15e\n", p.state[0], p.state[1], p.state[2]);
+        // printf("xtemp=%.15e, %.15e, %.15e\n", p.x_temp[0], p.x_temp[1], p.x_temp[2]);
 
-    
-    // exploit stellarator symmetry
-    bool symmetry_exploited = t > M_PI;
-    if(symmetry_exploited){
-        z = period - z;
-        t = 2*M_PI - t;
+        calc_derivs(p, p.derivs, srange, trange, zrange, quad_pts, m, q, p.mu, psi0);
+
+        // printf("derivs:  %.15e, %.15e, %.15e, %.15e\n", p.derivs[0], p.derivs[1], p.derivs[2], p.derivs[3]);
+
+
+        out_arr[0] = p.derivs[0];
+        out_arr[1] = p.derivs[1];
+        out_arr[2] = p.derivs[2];
+        out_arr[3] = p.derivs[3];
+
+
+        // printf("modB=%.15e, modB_derivs=%.15e, %.15e, %.15e, G=%.15e, iota=%.15e\n", out_arr[0], out_arr[1], out_arr[2], out_arr[3], out_arr[4], out_arr[5]);
+
+
     }
-    loc_arr[1] = t;
-    loc_arr[2] = z;
-
-    // interpolate(loc_arr, quadpts_arr, out, srange_arr, trange_arr, zrange_arr, n);
-
-
-    if(symmetry_exploited){
-        out[2] *= -1.0;
-        out[3] *= -1.0;
-    }
-
-    auto result = py::array_t<double>(n, out);
-    return result;
-
 }
 
-
-extern "C" py::array_t<double> test_derivatives(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, double v_par, double v_total, double m, double q, double psi0){
+extern "C" py::array_t<double> test_derivatives(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, py::array_t<double> vpar, double v_total, double m, double q, double psi0, int n_points){
     py::buffer_info quadpts_buf = quad_pts.request();
     double* quadpts_arr = static_cast<double*>(quadpts_buf.ptr);
 
@@ -994,24 +1048,55 @@ extern "C" py::array_t<double> test_derivatives(py::array_t<double> quad_pts, py
     py::buffer_info loc_buf = loc.request();
     double* loc_arr = static_cast<double*>(loc_buf.ptr);
 
-    double state[4];
-    double derivs[6]; // s,t,z,v_par derivs also modB, G
+    py::buffer_info vpar_buf = vpar.request();
+    double* vpar_arr = static_cast<double*>(vpar_buf.ptr);
+    
 
-    double v_perp2 = v_total*v_total - v_par*v_par;
+    double* srange_d;
+    cudaMalloc((void**)&srange_d, 3 * sizeof(double));
+    cudaMemcpy(srange_d, srange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
+
+    double* zrange_d;
+    cudaMalloc((void**)&zrange_d, 3 * sizeof(double));
+    cudaMemcpy(zrange_d, zrange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
+
+    double* trange_d;
+    cudaMalloc((void**)&trange_d, 3 * sizeof(double));
+    cudaMemcpy(trange_d, trange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
+
+    double* quadpts_d;
+    cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(double));
+    cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(double), cudaMemcpyHostToDevice);
+
+    double* loc_d;
+    cudaMalloc((void**)&loc_d, loc.size() * sizeof(double));
+    cudaMemcpy(loc_d, loc_arr, loc.size() * sizeof(double), cudaMemcpyHostToDevice);
+
+    double* vpar_d;
+    cudaMalloc((void**)&vpar_d, vpar.size() * sizeof(double));
+    cudaMemcpy(vpar_d, vpar_arr, vpar.size() * sizeof(double), cudaMemcpyHostToDevice);
+
+    double* out_d;
+    cudaMalloc((void**)&out_d, 4*n_points * sizeof(double));
 
 
-    double s = loc_arr[0];
-    double theta = loc_arr[1];
-    state[0] = s*cos(theta);
-    state[1] = s*sin(theta);
-    state[2] = loc_arr[2];
-    state[3] = v_par;
-    // fmt::print("v_par ={}\n", v_par);
 
-    // calc_derivs(state, derivs, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, -1, psi0);
-    double mu = v_perp2/(2*derivs[4]);
+    int nthreads = 256;
+    int nblks = n_points / nthreads + 1;
 
-    // calc_derivs(state, derivs, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, mu, psi0);
-    auto result = py::array_t<double>(4, derivs);
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+    cudaEventRecord(start);
+    test_gpu_derivs_kernel<<<nblks, nthreads>>>(quadpts_d, srange_d, trange_d, zrange_d, loc_d, vpar_d, v_total, out_d, m, q, psi0, n_points);
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+    float milliseconds = 0;
+    cudaEventElapsedTime(&milliseconds, start, stop);
+    std::cout << "interpolation kernel time (ms): " << milliseconds<< "\n";
+    
+    double out[4*n_points];
+    cudaMemcpy(&out, out_d, 4*n_points * sizeof(double), cudaMemcpyDeviceToHost);
+    auto result = py::array_t<double>(4*n_points, out);
     return result;
 }
