@@ -134,13 +134,15 @@ def test_interpolant_bfield(n_metagrid_pts):
     field = InterpolatedBoozerField(bri, degree, srange, thetarange, zetarange, True, nfp=nfp, stellsym=True)
 
     # generate test points
-    n_test_pts = 10000
+    n_test_pts = 100000
     np.random.seed(1800)
 
     s = np.random.uniform(low=0, high=1, size=(n_test_pts,1))
     t = np.random.uniform(low=0, high=2*np.pi, size=(n_test_pts,1))
     z = np.random.uniform(low=0, high=2*np.pi, size=(n_test_pts,1))
     stz = np.hstack((s,t,z))
+
+    # stz = np.array([[0.99895724, 5.72368665, 0.08919319]])
 
 
     # SIMSOPT INTERPOLANT
@@ -154,7 +156,7 @@ def test_interpolant_bfield(n_metagrid_pts):
 
 
     ### NEW INTERPOLANT
-    srange = (0, 1, 3*n_metagrid_pts+1)
+    srange = (0, 1.0, 3*n_metagrid_pts+1)
     trange = (0, np.pi, 3*n_metagrid_pts+1)
     zrange = (0, 2*np.pi/nfp, 3*n_metagrid_pts+1)
 
@@ -204,8 +206,16 @@ def test_interpolant_bfield(n_metagrid_pts):
     #     new_interpolation[i,:] = interpolated_values
 
     print(np.abs(simsopt_interpolation - new_interpolation) / simsopt_interpolation)
-    diff =np.max(np.abs(simsopt_interpolation - new_interpolation) / simsopt_interpolation)
+    rel_err = np.abs((simsopt_interpolation - new_interpolation) / simsopt_interpolation)
+    diff = np.max(rel_err)
     print("Maximum relative error in interpolation values on {} points: {}".format(n_test_pts, diff))
+
+    print("culprit particle:")
+    row_index = np.argmax(rel_err) // rel_err.shape[1]
+    print(stz[row_index, :])
+    print("simsopt", simsopt_interpolation[row_index, :])
+    print("new", new_interpolation[row_index, :])
+    print(rel_err[row_index, :])
 
 
 

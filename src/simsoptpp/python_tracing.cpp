@@ -20,7 +20,9 @@ extern "C" py::array_t<double> test_interpolation(py::array_t<double> quad_pts, 
 extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, int n, int n_points);
 
 extern "C" py::array_t<double> test_derivatives(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, py::array_t<double> vpar, double v_total, double m, double q, double psi0, int n_points);
-
+extern "C" vector<double> test_timestep(py::array_t<double> quad_pts, py::array_t<double> srange,
+        py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
+        double tol, double psi0, int nparticles);
 void init_tracing(py::module_ &m){
 
 
@@ -134,6 +136,21 @@ void init_tracing(py::module_ &m){
         py::arg("vtang")
         );
 
+    m.def("test_timestep", &test_timestep,
+        py::arg("quad_pts"),
+        py::arg("srange"),
+        py::arg("trange"),
+        py::arg("zrange"),
+        py::arg("stz_init"),
+        py::arg("m"),
+        py::arg("q"),
+        py::arg("vtotal"),
+        py::arg("vtang"),
+        py::arg("tol"),
+        py::arg("psi0"),
+        py::arg("nparticles")
+        );
+        
     m.def("particle_fullorbit_tracing", &particle_fullorbit_tracing<xt::pytensor>,
         py::arg("field"),
         py::arg("xyz_init"),

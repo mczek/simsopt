@@ -30,6 +30,10 @@ extern "C" py::array_t<double> test_interpolation(py::array_t<double> quad_pts, 
 extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, int n, int n_points);
 
 extern "C" py::array_t<double> test_derivatives(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, double m, double q, double mu, double psi0);
+
+extern "C" vector<double> test_timestep(py::array_t<double> quad_pts, py::array_t<double> srange,
+        py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
+        double tol, double psi0, int nparticles);
 // PYBIND11_MODULE(cuda_module, m) {
 //     m.def("add_kernel", [](py::array_t<int> a, py::array_t<int> b){
 //         auto a_buf = a.request(), b_buf = b.request();
