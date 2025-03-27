@@ -17,27 +17,18 @@ from simsopt.mhd import Vmec
 from simsopt.util import in_github_actions
 from simsopt.util.constants import PROTON_MASS, ELEMENTARY_CHARGE, ONE_EV
 
-filename = os.path.join('/global/homes/m/mczek/simsopt/examples/2_Intermediate/inputs/input.LandremanPaul2021_QH')
-# filename = '/global/homes/m/mczek/simsopt/input.misha'
-# filename = '/global/homes/m/mczek/simsopt/boozmn_wout_QA_bootstrap.nc'
+filename = os.path.join('./examples/2_Intermediate/inputs/input.LandremanPaul2021_QH')
 
-
-print(filename)
 logging.basicConfig()
 logger = logging.getLogger('simsopt.field.tracing')
 
 import simsoptpp as sopp
 
-"""
-Here we trace particles in the vacuum magnetic field in Boozer coordinates
-from the QH equilibrium in Landreman & Paul (arXiv:2108.03711). We evaluate
-energy conservation and compute resonant particle trajectories.
-"""
-
-# Sample s
+# Compute the pdf of birth rate in s
 def s_density(s):
 	return ((1-s**5)**2)*((1-s)**(-2/3))*np.exp(-19.94*(12*(1-s))**(-1/3))
 
+# Rejection sample s
 def sample_s():
 	bound = 3e-4
 	x = np.random.uniform()
@@ -49,15 +40,14 @@ def sample_s():
 		y = bound * np.random.uniform()
 	return x
 
-# Sample theta, zeta
+# Sample theta, zeta for a given s via rejection sampling
 def sample_tz(s, J_max, field):
 	J = rand_J = 0
 	while rand_J  >= J:
 		theta = np.random.uniform(low=0, high=2*math.pi, size=1)
 		zeta = np.random.uniform(low=0, high=2*math.pi, size=1)
 		rand_J = np.random.uniform(low=0, high=J_max, size=1)
-	
-		#print(s, theta, zeta)
+
 		loc = np.array([s, theta[0], zeta[0]]).reshape(1,3)
 		field.set_points(loc)
 
@@ -70,38 +60,21 @@ def sample_tz(s, J_max, field):
 		assert J <= J_max
 	return theta[0], zeta[0]
 
+# Sample s,t,z 
 def sample_stz(field, J_max):
 	s = sample_s()
-	
 	theta, zeta = sample_tz(s, J_max, field)
 	return np.array([s, theta, zeta])
-
-def particle_path_df(path, id, tmax):
-	df = pd.DataFrame(path)
-	df.columns = ['time', 's', 'theta', 'zeta', 'v_par']
-	df['id'] = id
-	df['lost'] = path[-1][0] < tmax - 1e-15
-	df['theta'] = df['theta'] % 2*math.pi
-	df['zeta'] = df['zeta'] % 2*math.pi
-	df = df[df['time'] == 0]
-	return df
-	
-
-
-
 
 # Compute VMEC equilibrium
 t1 = time.time()
 vmec = Vmec(filename)
 
 # Construct radial interpolant of magnetic field
-
 order = 3
 bri = BoozerRadialInterpolant(vmec, order, enforce_vacuum=True)
 
-
 # Construct 3D interpolation
-
 nfp = vmec.wout.nfp
 degree = 3
 srange = (0, 1, 15)
@@ -109,142 +82,67 @@ thetarange = (0, np.pi, 15)
 zetarange = (0, 2*np.pi/nfp, 15)
 field = InterpolatedBoozerField(bri, degree, srange, thetarange, zetarange, True, nfp=nfp, stellsym=True)
 
-simsopt_s_grid = np.linspace(srange[0], srange[1], srange[2]+1)
-simsopt_t_grid = np.linspace(thetarange[0], thetarange[1], thetarange[2]+1)
-simsopt_z_grid = np.linspace(zetarange[0], zetarange[1], zetarange[2]+1)
-
-print("simsopt_s_grid", simsopt_s_grid)
-print("simsopt_t_grid", simsopt_t_grid)
-print("simsopt_z_grid", simsopt_z_grid)
-
 # Evaluate error in interpolation
-
 print('Error in |B| interpolation', field.estimate_error_modB(1000), flush=True)
 
 
-# # Initialize vpar assuming mu = 0
+# Initialize vpar
 Ekin = 5000*ONE_EV
 mass = PROTON_MASS
 vpar = np.sqrt(2*0.8*Ekin/mass)
 
-# print(vpar_inits)
-# gc_tys, gc_zeta_hits = trace_particles_boozer(
-#     field, stz_inits, vpar_inits, tmax=1e-2, mass=mass, charge=ELEMENTARY_CHARGE,
-#     Ekin=Ekin, tol=1e-8, mode='gc_vac', stopping_criteria=[MaxToroidalFluxStoppingCriterion(0.99), MinToroidalFluxStoppingCriterion(0.01), ToroidalTransitStoppingCriterion(100, True)],
-#     forget_exact_path=False)
+# set up GPU interpolation grid
+def gen_bfield_info(field, srange, trange, zrange):
+
+	s_grid = np.linspace(srange[0], srange[1], srange[2])
+	theta_grid = np.linspace(trange[0], trange[1], trange[2])
+	zeta_grid = np.linspace(zrange[0], zrange[1], zrange[2])
+
+	quad_pts = np.empty((srange[2]*trange[2]*zrange[2], 3))
+	for i in range(srange[2]):
+		for j in range(trange[2]):
+			for k in range(zrange[2]):
+				quad_pts[trange[2]*zrange[2]*i + zrange[2]*j + k, :] = [s_grid[i], theta_grid[j], zeta_grid[k]]
 
 
+	field.set_points(quad_pts)
+	G = field.G()
+	iota = field.iota()
+	I = field.I()
+	modB = field.modB()
+	J = (G + iota*I)/(modB**2)
+	maxJ = np.max(J) # for rejection sampling
 
-	
-t2 = time.time()
+	psi0 = field.psi0
 
-# CALCULATE MAX J
-print("calculating J max")
+	# Build interpolation data
+	modB_derivs = field.modB_derivs()
+
+	quad_info = np.hstack((modB, modB_derivs, G, iota))
+	quad_info = np.ascontiguousarray(quad_info)
+
+	return quad_info, maxJ, psi0
+
+
+# generate grid with 15 simsopt grid pts
 n_grid_pts = 15
-s_max = 1
-
-srange = (0, s_max, 3*n_grid_pts+1)
-trange = (0, 2*np.pi, 3*2*n_grid_pts+1)
+srange = (0, 1, 3*n_grid_pts+1)
+trange = (0, np.pi, 3*n_grid_pts+1)
 zrange = (0, 2*np.pi/nfp, 3*n_grid_pts+1)
+quad_info, maxJ, psi0 = gen_bfield_info(field, srange, trange, zrange)
 
-s_grid = np.linspace(srange[0], srange[1], srange[2])
-theta_grid = np.linspace(trange[0], trange[1], trange[2])
-zeta_grid = np.linspace(zrange[0], zrange[1], zrange[2])
-
-print("theta_grid", theta_grid)
-print("zeta_grid", zeta_grid)
-
-
-print("building quad_pts")
-grid_start = time.time()
-quad_pts = np.empty((srange[2]*trange[2]*zrange[2], 3))
-for i in range(srange[2]):
-	for j in range(trange[2]):
-		for k in range(zrange[2]):
-			quad_pts[trange[2]*zrange[2]*i + zrange[2]*j + k, :] = [s_grid[i], theta_grid[j], zeta_grid[k]]
-grid_end = time.time()
-print("building grid time=", grid_end - grid_start)
-print(quad_pts.shape)
-
-print("building interpolation info")
-interp_start = time.time()
-field.set_points(quad_pts)
-G = field.G()
-iota = field.iota()
-I = field.I()
-modB = field.modB()
-J = (G + iota*I)/(modB**2)
-# minJ = np.min(J)
-maxJ = np.max(J)
-print("maxJ", maxJ)
-
-psi0 = field.psi0
-
-# Quantities to interpolate
-print("interpolation points")
-modB_derivs = field.modB_derivs()
-interp_end = time.time()
-print("interpolation time = ", interp_end-interp_start)
-
-quad_info = np.hstack((modB, modB_derivs, G, iota))
-quad_info = np.ascontiguousarray(quad_info)
-
-# for i in range(quad_info.shape[0]):
-# 	print(quad_pts[i,:])
-# 	print(quad_info[i,:])
-# set seed
+# set seed for consistency
 np.random.seed(8)
 
-
-# TRACE NAIVE PARTICLES
-t3 = time.time()
-nparticles = 100
-filename = "boozer_tracing_loss_time.csv"
-
+# trace particles
+nparticles = 25000
 
 stz_inits = np.vstack([sample_stz(field, maxJ) for i in range(nparticles)])
 vpar_inits = vpar * np.random.uniform(low=-1, high=1, size=nparticles)
 
 print("tracing particles")
 
-field.set_points(stz_inits)
-G = field.G()
-iota = field.iota()
-modB = field.modB()
-
-# Quantities to interpolate
-print("interpolation points")
-modB_derivs = field.modB_derivs()
-test_quad_info = np.hstack((modB, modB_derivs, G, iota))
-
-# y1 = stz_inits[:, 0] * np.cos(stz_inits[:, 1])
-# y2 = stz_inits[:, 0] * np.sin(stz_inits[:, 1])
-
-# s = np.sqrt(y1*y1 + y2*y2)
-# t = np.arctan2(y2, y1) 
-# new_stz_inits = stz_inits.copy()
-# new_stz_inits[:, 0] = s
-# new_stz_inits[:, 1] = t
-
-# field.set_points(new_stz_inits)
-# G = field.G()
-# iota = field.iota()
-# modB = field.modB()
-
-# # Quantities to interpolate
-# print("interpolation points")
-# modB_derivs = field.modB_derivs()
-# test_quad_info = np.hstack((modB, modB_derivs, G, iota))
-
-with np.printoptions(threshold=np.inf):
-	print(stz_inits)
-	# print(s)
-	# print(t)
-	print(test_quad_info)
-
-print("row 465 ", quad_info[465, :])
-
-
+# trace on GPU
 last_time = sopp.gpu_tracing(
 	quad_pts=quad_info, 
 	srange=srange,
@@ -260,24 +158,18 @@ last_time = sopp.gpu_tracing(
 	psi0=psi0, 
 	nparticles=nparticles)
 
+last_time = np.reshape(last_time, (nparticles, 7))
 
 
-t4 = time.time()
-print(last_time)
-did_leave = [t < 1e-2 for t in last_time]
+particle_data = pd.DataFrame({'s_start': stz_inits[:,0], 't_start': stz_inits[:,1], 'z_start':stz_inits[:,2], 'vpar_start':vpar_inits,
+							  's_end': last_time[:,0], 't_end':last_time[:,1], 'z_end':last_time[:,2], 'vpar_end':last_time[:,3], 'last_time':last_time[:,4],
+							  'steps_accepted':last_time[:,5], 'steps_attempted':last_time[:,6]})
+particle_data.to_csv('qh_particle_data.csv')
+
+
+did_leave = [t < 1e-2 for t in particle_data['last_time']]
 loss_frac = sum(did_leave) / len(did_leave)
 print(f"Number of particles= {nparticles}")
 print(f"Loss fraction: {loss_frac:.3f}")
-print(f"Total time for particle tracing={t4-t1:.3f}s.")
-print(f"VMEC+simsopt interpolant setup time={t2-t1:.3f}s.")
-print(f"generating interpolation points for tracing time={t3-t2:.3f}s.")
-print(f"gpu_tracing function time for particle tracing={t4-t3:.3f}s.")
 
 
-
-
-# df = pd.DataFrame(stz_inits)
-# df.columns = ["s", "theta", "zeta"]
-# df['v_par'] = vpar_inits
-# df['last_time'] = last_time
-# df.to_csv(filename, header='column_names')
