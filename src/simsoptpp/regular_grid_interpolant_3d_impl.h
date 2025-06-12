@@ -186,6 +186,7 @@ void RegularGridInterpolant3D<Array>::evaluate_local(double x, double y, double 
                 double sumk(0.);
                 for (int k = 0; k < degree+1; ++k) {
                     double pkz = pkzs[k];
+                    fmt::print("B_val: {}\n", *val_ptr);
                     sumk += (*val_ptr) * pkz;
                     val_ptr += padded_value_size;
                 }

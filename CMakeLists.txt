@@ -2,12 +2,16 @@ cmake_minimum_required(VERSION 3.15)
 project(simsoptpp LANGUAGES CXX)
 #set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake ${CMAKE_MODULE_PATH})
 
+enable_language(CUDA)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -arch=sm_80 -lineinfo")
+
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 set(Python_FIND_STRATEGY LOCATION)
 find_package(Python REQUIRED COMPONENTS Interpreter Development.Module NumPy)
 find_package(pybind11 CONFIG REQUIRED)
+find_package(CUDA REQUIRED)
 
 message(status "Python executable is ${Python_EXECUTABLE}")
 message(status "Python Development Module found value is ${Python_Development.Module_FOUND}")
@@ -117,6 +121,7 @@ set(XTENSOR_USE_OPENMP 0)
 set(XTENSOR_USE_TBB 0)
 
 
+
 pybind11_add_module(${PROJECT_NAME}
     src/simsoptpp/python.cpp src/simsoptpp/python_surfaces.cpp src/simsoptpp/python_curves.cpp
     src/simsoptpp/boozerresidual_py.cpp
@@ -132,6 +137,8 @@ pybind11_add_module(${PROJECT_NAME}
     src/simsoptpp/magneticfield_biotsavart.cpp src/simsoptpp/python_boozermagneticfield.cpp 
     src/simsoptpp/magneticfield_wireframe.cpp
     src/simsoptpp/boozerradialinterpolant.cpp
+    src/simsoptpp/cuda_wrapper.cpp
+    src/simsoptpp/cuda_kernel.cu
     src/simsoptpp/wireframe_optimization.cpp
     )
 
