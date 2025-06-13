@@ -1,0 +1,20 @@
+#!/bin/bash
+#SBATCH -N1
+#SBATCH -p gpu
+
+module load python
+module load vmec
+. simsopt-gpu/bin/activate
+
+#python3 ./gpu_testing/gpu_tracing.py 
+python ./example_boozer.py
+#python ./example_boozer_alex.py
+# python ./gpu_testing/test_interpolant.py
+
+# srun -n 1  python3 ./examples/1_Simple/tracing_particle.py
+# srun -n 2  python3 ./examples/1_Simple/tracing_particle.py
+# srun -n 4  python3 ./examples/1_Simple/tracing_particle.py
+# srun -n 8  python3 ./examples/1_Simple/tracing_particle.py
+# srun -n 16 python3 ./examples/1_Simple/tracing_particle.py
+# srun -n 32 python3 ./examples/1_Simple/tracing_particle.py
+# srun -n 64 python3 ./examples/1_Simple/tracing_particle.py

@@ -88,14 +88,6 @@ __host__ __device__ void shape(double x, double* shape){
     return;         
 }
 
-// __host__ __device__ void dshape(double x, double h, double* dshape){
-//     dshape[0] = (-(2.0-x)*(3.0-x)-(1.0-x)*(3.0-x)-(1.0-x)*(2.0-x))/(h*6.0);
-//     dshape[1] = ( (2.0-x)*(3.0-x)-x*(3.0-x)-x*(2.0-x))/(h*2.0);
-//     dshape[2] = ( (x-1.0)*(3.0-x)+x*(3.0-x)-x*(x-1.0))/(h*2.0);
-//     dshape[3] = ( (x-1.0)*(x-2.0)+x*(x-2.0)+x*(x-1.0))/(h*6.0);
-//     return;         
-// }
-
 __host__  __device__ __forceinline__ void interpolate(particle_t& p, const double* __restrict__ data, double* out, const double* __restrict__ srange_arr, const double* __restrict__ trange_arr, const double* __restrict__ zrange_arr, int n){
 
 
@@ -119,33 +111,19 @@ __host__  __device__ __forceinline__ void interpolate(particle_t& p, const doubl
     double thread_total = 0.0;
     // // quad pts are indexed s t z
     for(int ii=0; ii<=3; ++ii){ // s grid
-        // printf("interpolate control flow: (%d + %d) < %d\n", p.i, ii, ns);
+        int row_i = (p.i+ii)*nt*nz;
+        double shape_val_i = p.s_shape[ii];
 
-        // fmt::print("control flow:(%d + %d)  < %d\n", p.i, ii, ns);
-        if((p.i+ii) < ns){
-            for(int jj=0; jj<=3; ++jj){ // theta grid           
-                int wrap_j = (p.j+jj) % nt;
-                for(int kk=0; kk<=3; ++kk){ // zeta grid
-                    int wrap_k = (p.k+kk) % nz;
-                    // printf("wrap_j = %d, wrap_k = %d\n", wrap_j, wrap_k);
-                    int row_idx = (p.i+ii)*nt*nz + wrap_j*nz + wrap_k;
-                    
-                    double shape_val = p.s_shape[ii]*p.t_shape[jj]*p.z_shape[kk];
-                    // std::cout << row_idx << " modB interpolant: " << data[n*row_idx] << std::endl;
+        for(int jj=0; jj<=3; ++jj){ // theta grid           
+            int row_ijk = row_i + (p.j+jj)*nz + p.k;
+            double shape_val_ij = shape_val_i*p.t_shape[jj];
 
-                    // printf("modB val=%.15e, s_shape=%.15e, t_shape=%.15e, z_shape=%.15e\n", data[n*row_idx], p.s_shape[ii], p.t_shape[jj], p.z_shape[kk]);
-                    // fmt::print("modB val={}, s_shape={}, t_shape={}, z_shape={}\n", data[n*row_idx], p.s_shape[ii], p.t_shape[jj], p.z_shape[kk]);
-                        // // std::cout << "accessing elt " << 6*row_idx + zz << "\n";
-                    for(int zz=0; zz<6; ++zz){
-                        out[zz] += data[n*row_idx + zz]*shape_val;
-                    }
-                        // if(zz == 0){
-                        //     // std::cout << quadpts_arr[6*row_idx + zz] << "\n";
-                        // }
-                        
+            for(int kk=0; kk<=3; ++kk){ // zeta grid
+                int row_idx = row_ijk + kk;
+                double shape_val = shape_val_ij*p.z_shape[kk];
 
-                    // std::cout << "running modB interpolant: " << interpolants[0] << std::endl;
-
+                for(int zz=0; zz<6; ++zz){
+                    out[zz] += data[n*row_idx + zz]*shape_val;
                 }
             }
         }
@@ -168,56 +146,36 @@ __host__  __device__ void calc_derivs(particle_t& p, double* out, double* srange
 
     */
     
-
-    // double* loc = loc_shared + 3* block_part_id;
     double interpolants[6] = {0.0};
     
-
-    
-   
-    // printf("interpolation loc: %.15e, %.15e, %.15e\n", p.interpolation_loc[0], p.interpolation_loc[1], p.interpolation_loc[2]);
-
     interpolate(p, quadpts_arr, interpolants, srange_arr, trange_arr, zrange_arr, 6);
 
-    // printf("interpolants:  %.15e, %.15e, %.15e, %.15e, %.15e, %.15e\n", interpolants[0], interpolants[1], interpolants[2], interpolants[3], interpolants[4], interpolants[5]);
-
-    
     double s = sqrt(p.x_temp[0]*p.x_temp[0] + p.x_temp[1]*p.x_temp[1]);
     double theta = atan2(p.x_temp[1], p.x_temp[0]);
     double z = p.x_temp[2];
     double v_par = p.x_temp[3];
-    if(p.symmetry_exploited){
-        interpolants[2] *= -1.0;
-        interpolants[3] *= -1.0;
-    }
-    // printf("s=%.15e, theta=%.15e, zeta=%.15e, vpar=%.15e\n", s, theta, z, v_par);
-    // printf("interpolants:  %.15e, %.15e, %.15e, %.15e, %.15e, %.15e\n", interpolants[0], interpolants[1], interpolants[2], interpolants[3], interpolants[4], interpolants[5]);
 
-    // printf("modB=%.15e, modB_derivs=%.15e, %.15e, %.15e, G=%.15e, iota=%.15e\n", interpolants[0], interpolants[1], interpolants[2], interpolants[3], interpolants[4], interpolants[5]);
-    // fmt::print("modB ={}, modB derivs={} {} {}, G={}, iota={}\n", interpolants[0], interpolants[1], interpolants[2], interpolants[3], interpolants[4], interpolants[5]);
-    // std::cout << "\n";
-
-    // fmt::print("m={}, v_par={}, mu={}\n", m, v_par, mu);
-    // printf("m=%.15e, mu=%.15e, psi0=%.15e, q=%.15e\n", m, mu, psi0, q);
+    // below replaces this control flow for account for stellarator symmetry
+    // to reduce thread divergence
+    // if(p.symmetry_exploited){
+    //     interpolants[2] *= -1.0;
+    //     interpolants[3] *= -1.0;
+    // }
+    double sign = 1.0 - 2.0*p.symmetry_exploited;
+    interpolants[2] *= sign;
+    interpolants[3] *= sign;
 
     double fak1 = m*v_par*v_par/interpolants[0] + m*mu;
     double sdot = -interpolants[2]*fak1 / (q*psi0);
     double tdot = interpolants[1]*fak1 / (q*psi0) + interpolants[5]*v_par*interpolants[0]/interpolants[4];
-
-    // fmt::print("fak1={}, sdot={}, tdot={}\n", fak1, sdot, tdot);
-
-    // printf("fak1=%.15e, sdot=%.15e, tdot=%.15e\n", fak1, sdot, tdot);
 
     out[0] = sdot*cos(theta) - s*sin(theta)*tdot;
     out[1] = sdot*sin(theta) + s*cos(theta)*tdot;
     out[2] = v_par*interpolants[0]/interpolants[4];
     out[3] = -(interpolants[5]*interpolants[2] + interpolants[3])*mu*interpolants[0] / interpolants[4];
 
-    // fmt::print("derivs = {} {} {} {}\n\n", out[0], out[1], out[2], out[3]);
     out[4] = interpolants[0]; // modB
     out[5] = interpolants[4]; // G
-
-    // printf("calc_derivs out vals: %.15e, %.15e, %.15e, %.15e\n", out[0], out[1], out[2], out[3]);
 
 }
 
@@ -329,12 +287,15 @@ __host__ __device__ void build_state(particle_t& p, int deriv_id, double* srange
     
     // exploit stellarator symmetry
     p.symmetry_exploited = t > M_PI;
-    if(p.symmetry_exploited){
-        z = period - z;
-        t = 2*M_PI - t;
-        // std::cout << "symmetry exploited\n";
+    // below replaces the following control flow
+    // to reduce thread divergence
+    // if(p.symmetry_exploited){
+    //     z = period - z;
+    //     t = 2*M_PI - t;
+    // }
+    z += p.symmetry_exploited*(period - 2*z);
+    t += p.symmetry_exploited*2*(M_PI - t);
 
-    }
     p.interpolation_loc[0] = s;
     p.interpolation_loc[1] = t;
     p.interpolation_loc[2] = z;
@@ -807,7 +768,7 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
     cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(double));
     cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(double), cudaMemcpyHostToDevice);
 
-    int nthreads = 256;
+    int nthreads = 512;
     int nblks = nparticles / nthreads + 1;
     std::cout << "starting particle tracing kernel\n";
 
@@ -856,6 +817,7 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
     return particle_output;
 }
 
+// unused function
 extern "C" py::array_t<double> test_interpolation(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, int n){
     py::buffer_info quadpts_buf = quad_pts.request();
     double* quadpts_arr = static_cast<double*>(quadpts_buf.ptr);
@@ -888,21 +850,21 @@ extern "C" py::array_t<double> test_interpolation(py::array_t<double> quad_pts, 
 
     
     // exploit stellarator symmetry
-    bool symmetry_exploited = t > M_PI;
-    if(symmetry_exploited){
-        z = period - z;
-        t = 2*M_PI - t;
-    }
-    loc_arr[1] = t;
-    loc_arr[2] = z;
+    // bool symmetry_exploited = t > M_PI;
+    // if(symmetry_exploited){
+    //     z = period - z;
+    //     t = 2*M_PI - t;
+    // }
+    // loc_arr[1] = t;
+    // loc_arr[2] = z;
 
-    // interpolate(loc_arr, quadpts_arr, out, srange_arr, trange_arr, zrange_arr, n);
+    // // interpolate(loc_arr, quadpts_arr, out, srange_arr, trange_arr, zrange_arr, n);
 
 
-    if(symmetry_exploited){
-        out[2] *= -1.0;
-        out[3] *= -1.0;
-    }
+    // if(symmetry_exploited){
+    //     out[2] *= -1.0;
+    //     out[3] *= -1.0;
+    // }
 
     auto result = py::array_t<double>(n, out);
     return result;
@@ -936,10 +898,15 @@ __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* srange, 
         // printf("modB=%.15e, modB_derivs=%.15e, %.15e, %.15e, G=%.15e, iota=%.15e\n", out_arr[0], out_arr[1], out_arr[2], out_arr[3], out_arr[4], out_arr[5]);
 
 
-        if(p.symmetry_exploited){
-            out_arr[2] *= -1.0;
-            out_arr[3] *= -1.0;
-        }
+        // below replaces this control flow for account for stellarator symmetry
+        // to reduce thread divergence
+        // if(p.symmetry_exploited){
+        //     interpolants[2] *= -1.0;
+        //     interpolants[3] *= -1.0;
+        // }
+        double sign = 1.0 - 2.0*p.symmetry_exploited;
+        out_arr[2] *= sign;
+        out_arr[3] *= sign;
 
 
 
