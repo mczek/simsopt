@@ -15,7 +15,7 @@ from test_interpolant import *
 np.random.seed(1800)
 
 
-def test_derivs(field, nfp, n_metagrid_pts, n_test_pts):
+def test_derivs(field, nfp, n_metagrid_pts, n_test_pts, verify=True):
         # generate test points
         s = np.random.uniform(low=0, high=1, size=(n_test_pts,1))
         t = np.random.uniform(low=0, high=2*np.pi, size=(n_test_pts,1))
@@ -25,11 +25,7 @@ def test_derivs(field, nfp, n_metagrid_pts, n_test_pts):
         VELOCITY = np.sqrt(2 * ENERGY / MASS)
         vpar_init = np.random.uniform(-VELOCITY, VELOCITY, (n_test_pts,))
 
-        print("computing simsopt derivatives")
-        old_derivs = np.empty((n_test_pts, 4))
-        for i in range(n_test_pts):
-                old_derivs[i,:] = sopp.simsopt_derivs(field, stz[i,:], MASS, CHARGE, VELOCITY, vpar_init[i])
-
+      
 
         ### NEW INTERPOLANT
         srange, trange, zrange, quad_info = setup_interpolant(field, nfp, n_metagrid_pts)
@@ -41,28 +37,34 @@ def test_derivs(field, nfp, n_metagrid_pts, n_test_pts):
         new_derivs = sopp.test_derivatives(quad_info, srange, trange, zrange, stz, vpar_init, VELOCITY, MASS, CHARGE, psi0, stz.shape[0])
         new_derivs = np.reshape(new_derivs, (stz.shape[0], 4))
 
-        rel_err = np.abs((old_derivs - new_derivs) / old_derivs)
-        diff = np.max(rel_err)
-        print(np.abs(old_derivs - new_derivs) / old_derivs)
-
-        print("Maximum relative error in derivative values on {} points: {}".format(n_test_pts, diff))
-
-        print("culprit particle:")
-        row_index = np.argmax(rel_err) // rel_err.shape[1]
-        print(stz[row_index, :])
-        print(vpar_init[row_index])
-        print("simsopt", old_derivs[row_index, :])
-        print("new", new_derivs[row_index, :])
-        print(rel_err[row_index, :])
+        if verify:
+                print("computing simsopt derivatives")
+                old_derivs = np.empty((n_test_pts, 4))
+                for i in range(n_test_pts):
+                        old_derivs[i,:] = sopp.simsopt_derivs(field, stz[i,:], MASS, CHARGE, VELOCITY, vpar_init[i])
 
 
+                rel_err = np.abs((old_derivs - new_derivs) / old_derivs)
+                diff = np.max(rel_err)
+                print(np.abs(old_derivs - new_derivs) / old_derivs)
+
+                print("Maximum relative error in derivative values on {} points: {}".format(n_test_pts, diff))
+
+                print("culprit particle:")
+                row_index = np.argmax(rel_err) // rel_err.shape[1]
+                print(stz[row_index, :])
+                print(vpar_init[row_index])
+                print("simsopt", old_derivs[row_index, :])
+                print("new", new_derivs[row_index, :])
+                print(rel_err[row_index, :])
 
 
 
-def test_timestep(field, nfp, n_metagrid_pts, n_test_pts):
+
+
+def test_timestep(field, nfp, n_metagrid_pts, n_test_pts, verify=True):
 
         # generate test points
-        n_test_pts = 10000
         s = np.random.uniform(low=0, high=0.95, size=(n_test_pts,1))
         t = np.random.uniform(low=0, high=2*np.pi, size=(n_test_pts,1))
         z = np.random.uniform(low=0, high=2*np.pi, size=(n_test_pts,1))
@@ -71,15 +73,7 @@ def test_timestep(field, nfp, n_metagrid_pts, n_test_pts):
         VELOCITY = np.sqrt(2 * ENERGY / MASS)
         vpar_init = np.random.uniform(-VELOCITY, VELOCITY, (n_test_pts,))
 
-        print("computing simsopt timestep")
-
         
-        gc_tys, gc_zeta_hits = trace_particles_boozer(
-                field, stz, vpar_init, tmax=1e-2, mass=MASS, charge=CHARGE,
-                Ekin=ENERGY, zetas=[0], tol=1e-9, stopping_criteria=[IterationStoppingCriterion(1)],
-                forget_exact_path=True)
-        
-        final_positions = np.array([x[-1] for x in gc_tys])
 
         print("computing new timesteps")
         srange, trange, zrange, quad_info = setup_interpolant(field, nfp, n_metagrid_pts)
@@ -104,19 +98,29 @@ def test_timestep(field, nfp, n_metagrid_pts, n_test_pts):
 
         new_final_positions = np.array([[x[4], x[0], x[1], x[2], x[3]] for x in last_time])
 
-        rel_err = np.abs((final_positions - new_final_positions) / final_positions)
-        diff = np.max(rel_err)
-        print(np.abs(final_positions - new_final_positions) / final_positions)
 
-        print("Maximum relative error in final positions on {} points: {}".format(n_test_pts, diff))
+        print("computing simsopt timestep")
 
-        print("culprit particle:")
-        row_index = np.argmax(rel_err) // rel_err.shape[1]
-        print(stz[row_index, :])
-        print(vpar_init[row_index])
-        print("simsopt", final_positions[row_index, :])
-        print("new", new_final_positions[row_index, :])
-        print(rel_err[row_index, :])
+        if verify:
+                gc_tys, gc_zeta_hits = trace_particles_boozer(
+                        field, stz, vpar_init, tmax=1e-2, mass=MASS, charge=CHARGE,
+                        Ekin=ENERGY, zetas=[0], tol=1e-9, stopping_criteria=[IterationStoppingCriterion(1)],
+                        forget_exact_path=True)
+                
+                final_positions = np.array([x[-1] for x in gc_tys])
+                rel_err = np.abs((final_positions - new_final_positions) / final_positions)
+                diff = np.max(rel_err)
+                print(np.abs(final_positions - new_final_positions) / final_positions)
+
+                print("Maximum relative error in final positions on {} points: {}".format(n_test_pts, diff))
+
+                print("culprit particle:")
+                row_index = np.argmax(rel_err) // rel_err.shape[1]
+                print(stz[row_index, :])
+                print(vpar_init[row_index])
+                print("simsopt", final_positions[row_index, :])
+                print("new", new_final_positions[row_index, :])
+                print(rel_err[row_index, :])
 
 
 if __name__ == "__main__":
@@ -138,5 +142,45 @@ if __name__ == "__main__":
         field = InterpolatedBoozerField(bri, degree, srange, thetarange, zetarange, extrapolate=True, nfp=nfp, stellsym=True)
 
         test_derivs(field, nfp, 15, 10000)
+        test_derivs(field, nfp, 15, 200000, False)
+        test_derivs(field, nfp, 15, 400000, False)
+        test_derivs(field, nfp, 15, 800000, False)
+        test_derivs(field, nfp, 15, 1600000, False)
+        test_derivs(field, nfp, 15, 3200000, False)
 
-        test_timestep(field, nfp, 15, 10000)
+
+        test_timestep(field, nfp, 15, 100000)
+        test_timestep(field, nfp, 15, 200000, False)
+        test_timestep(field, nfp, 15, 400000, False)
+        test_timestep(field, nfp, 15, 800000, False)
+        test_timestep(field, nfp, 15, 1600000, False)
+        test_timestep(field, nfp, 15, 3200000, False)
+
+
+        # derivs baseline
+        # calculating new derivatives
+        # interpolation kernel time (ms): 0.89344
+        # calculating new derivatives
+        # interpolation kernel time (ms): 1.72909
+        # calculating new derivatives
+        # interpolation kernel time (ms): 3.24525
+        # calculating new derivatives
+        # interpolation kernel time (ms): 6.25683
+        # calculating new derivatives
+        # interpolation kernel time (ms): 12.4094
+
+
+        # single timestep baseline
+        # tracing kernels time (ms): 10.0615
+        # tracing kernels time (ms): 19.1095
+        # tracing kernels time (ms): 36.6104
+        # tracing kernels time (ms): 72.267
+        # tracing kernels time (ms): 143.349
+        # tracing kernels time (ms): 285.381
+
+        # starting particle tracing kernel (with local particle)
+        # tracing kernels time (ms): 16.955
+        # tracing kernels time (ms): 33.0403
+        # tracing kernels time (ms): 65.5089
+        # tracing kernels time (ms): 130.325
+        # tracing kernels time (ms): 259.851

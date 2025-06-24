@@ -36,7 +36,7 @@ typedef struct particle_t {
     double derivs[42] = {0.0};
     // double k2[6], k3[6], k4[6], k5[6], k6[6], k7[6];   
     double x_temp[4], x_err[4];
-    double s_shape[4], t_shape[4], z_shape[4];
+    double r_shape[4], phi_shape[4], z_shape[4];
     int i, j, k;
     double interpolation_loc[3];
     bool symmetry_exploited;
@@ -96,11 +96,11 @@ __host__ __device__ void shape(double x, double* shape){
 //     return;         
 // }
 
-__host__  __device__ __forceinline__ void interpolate(particle_t& p, const double* __restrict__ data, double* out, const double* __restrict__ srange_arr, const double* __restrict__ trange_arr, const double* __restrict__ zrange_arr, int n){
+__host__  __device__ __forceinline__ void interpolate(particle_t& p, const double* __restrict__ data, double* out, const double* __restrict__ rrange_arr, const double* __restrict__ phirange_arr, const double* __restrict__ zrange_arr, int n){
 
 
-    int ns = srange_arr[2];
-    int nt = trange_arr[2];
+    int nr = rrange_arr[2];
+    int nphi = phirange_arr[2];
     int nz = zrange_arr[2];
 
     // Need to interpolate modB, modB derivs, G, and iota
@@ -116,27 +116,27 @@ __host__  __device__ __forceinline__ void interpolate(particle_t& p, const doubl
     // modB, derivs of modB, G, iota
     // double interpolants[6] = {0};
 
-    double thread_total = 0.0;
+    // double thread_total = 0.0;
     // // quad pts are indexed s t z
     for(int ii=0; ii<=3; ++ii){ // s grid
         // printf("interpolate control flow: (%d + %d) < %d\n", p.i, ii, ns);
 
         // fmt::print("control flow:(%d + %d)  < %d\n", p.i, ii, ns);
-        if((p.i+ii) < ns){
+        if((p.i+ii) < nr){
             for(int jj=0; jj<=3; ++jj){ // theta grid           
-                int wrap_j = (p.j+jj) % nt;
+                int wrap_j = (p.j+jj) % nphi;
                 for(int kk=0; kk<=3; ++kk){ // zeta grid
                     int wrap_k = (p.k+kk) % nz;
                     // printf("wrap_j = %d, wrap_k = %d\n", wrap_j, wrap_k);
-                    int row_idx = (p.i+ii)*nt*nz + wrap_j*nz + wrap_k;
+                    int row_idx = (p.i+ii)*nphi*nz + wrap_j*nz + wrap_k;
                     
-                    double shape_val = p.s_shape[ii]*p.t_shape[jj]*p.z_shape[kk];
+                    double shape_val = p.r_shape[ii]*p.phi_shape[jj]*p.z_shape[kk];
                     // std::cout << row_idx << " modB interpolant: " << data[n*row_idx] << std::endl;
 
                     // printf("modB val=%.15e, s_shape=%.15e, t_shape=%.15e, z_shape=%.15e\n", data[n*row_idx], p.s_shape[ii], p.t_shape[jj], p.z_shape[kk]);
                     // fmt::print("modB val={}, s_shape={}, t_shape={}, z_shape={}\n", data[n*row_idx], p.s_shape[ii], p.t_shape[jj], p.z_shape[kk]);
                         // // std::cout << "accessing elt " << 6*row_idx + zz << "\n";
-                    for(int zz=0; zz<6; ++zz){
+                    for(int zz=0; zz<n; ++zz){
                         out[zz] += data[n*row_idx + zz]*shape_val;
                     }
                         // if(zz == 0){
@@ -155,7 +155,7 @@ __host__  __device__ __forceinline__ void interpolate(particle_t& p, const doubl
 }
 
 // out contains derivatives for x , y, z, v_par, and then norm of B and surface distance interpolation
-__host__  __device__ void calc_derivs(particle_t& p, double* out, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr, double m, double q, double mu, double psi0){
+__host__  __device__ void calc_derivs(particle_t& p, double* out, double* rrange_arr, double* phirange_arr, double* zrange_arr, double* quadpts_arr, double m, double q, double mu, double psi0){
     /*
     * Returns     
     out[0] = ds/dtime
@@ -177,7 +177,7 @@ __host__  __device__ void calc_derivs(particle_t& p, double* out, double* srange
    
     // printf("interpolation loc: %.15e, %.15e, %.15e\n", p.interpolation_loc[0], p.interpolation_loc[1], p.interpolation_loc[2]);
 
-    interpolate(p, quadpts_arr, interpolants, srange_arr, trange_arr, zrange_arr, 6);
+    interpolate(p, quadpts_arr, interpolants, rrange_arr, phirange_arr, zrange_arr, 6);
 
     // printf("interpolants:  %.15e, %.15e, %.15e, %.15e, %.15e, %.15e\n", interpolants[0], interpolants[1], interpolants[2], interpolants[3], interpolants[4], interpolants[5]);
 
@@ -223,7 +223,7 @@ __host__  __device__ void calc_derivs(particle_t& p, double* out, double* srange
 
 
 
-__host__ __device__ void build_state(particle_t& p, int deriv_id, double* srange_arr, double* trange_arr, double* zrange_arr){
+__host__ __device__ void build_state(particle_t& p, int deriv_id, double* rrange_arr, double* phirange_arr, double* zrange_arr){
    
 
     // const double a61 = 9017.0 / 3168.0, a62 = -355.0 / 33.0, a63 = 46732.0 / 5247.0, a64 = 49.0 / 176.0, a65 = -5103.0 / 18656.0;
@@ -298,14 +298,14 @@ __host__ __device__ void build_state(particle_t& p, int deriv_id, double* srange
 
     // printf("deriv pt: %.15e, %.15e, %.15e, %.15e\n", p.x_temp[0], p.x_temp[1], p.x_temp[2], p.x_temp[3]);
 
-
-    double s = sqrt(p.x_temp[0]*p.x_temp[0] + p.x_temp[1]*p.x_temp[1]);
-    double theta = atan2(p.x_temp[1], p.x_temp[0]);
+    // convert to cylindrical coordinates for interpolation
+    double r = sqrt(p.x_temp[0]*p.x_temp[0] + p.x_temp[1]*p.x_temp[1]);
+    double phi = atan2(p.x_temp[1], p.x_temp[0]);
     double z = p.x_temp[2];
     double v_par = p.x_temp[3];
     
 
-    // printf("deriv pt: %.15e, %.15e, %.15e, %.15e, %.15e\n", p.dt, s, theta, z, p.x_temp[3]);
+    printf("deriv pt: %.15e, %.15e, %.15e, %.15e, %.15e\n", p.dt, r, phi, z, p.x_temp[3]);
 
 
     // fmt::print("s={}, theta={}, zeta={}, v_par={}\n", s, theta, z, v_par);
@@ -314,29 +314,33 @@ __host__ __device__ void build_state(particle_t& p, int deriv_id, double* srange
 
     // exploit potential symmetry
     
-    // we want to exploit periodicity in the B-field, but leave sine(theta) unchanged
-    double t = fmod(theta, 2*M_PI);
-    t += 2*M_PI*(t < 0);
+    // restrict phi to [0, 2pi]
+    // phi = fmod(phi, 2*M_PI);
+    // phi += 2*M_PI*(phi < 0);
 
-    // we can modify z because it's only used to access the B-field location
-    double period = zrange_arr[1];
-    z = fmod(z, period);
-    z += period*(z < 0);
+    // restrict phi to [0, 2pi / nfp]
+    double period = phirange_arr[1];
+    phi = fmod(phi, period);
+    phi += period*(phi < 0);
 
     // printf("deriv pt (pos): %.15e, %.15e, %.15e, %.15e, %.15e\n", p.dt, s, t, z, p.x_temp[3]);
 
 
     
     // exploit stellarator symmetry
-    p.symmetry_exploited = t > M_PI;
+    p.symmetry_exploited = z < 0;
     if(p.symmetry_exploited){
-        z = period - z;
-        t = 2*M_PI - t;
+        z = - z;
+        phi = 2*M_PI - phi;
+        phi = fmod(phi, period);
+        phi += period*(phi < 0);
         // std::cout << "symmetry exploited\n";
 
     }
-    p.interpolation_loc[0] = s;
-    p.interpolation_loc[1] = t;
+
+    // note: remove this memory usage
+    p.interpolation_loc[0] = r;
+    p.interpolation_loc[1] = phi;
     p.interpolation_loc[2] = z;
 
     // printf("deriv pt (symm exploited): %.15e, %.15e, %.15e, %.15e, %.15e\n", p.dt, s, t, z, p.x_temp[3]);
@@ -352,11 +356,11 @@ __host__ __device__ void build_state(particle_t& p, int deriv_id, double* srange
     // printf("zrange: %.15e, %.15e, %.15e\n", zrange_arr[0], zrange_arr[1], zrange_arr[2]);
 
 
-    double s_grid_size = (srange_arr[1]-srange_arr[0]) / (srange_arr[2]-1);
-    double theta_grid_size = (trange_arr[1]-trange_arr[0]) / (trange_arr[2]-1);
-    double zeta_grid_size = (zrange_arr[1]-zrange_arr[0]) / (zrange_arr[2]-1);
+    double r_grid_size = (rrange_arr[1]-rrange_arr[0]) / (rrange_arr[2]-1);
+    double phi_grid_size = (phirange_arr[1]-phirange_arr[0]) / (phirange_arr[2]-1);
+    double z_grid_size = (zrange_arr[1]-zrange_arr[0]) / (zrange_arr[2]-1);
 
-    // printf("grid sizes: s=%.15e, theta=%.15e, zeta=%.15e\n", s_grid_size, theta_grid_size, zeta_grid_size);
+    printf("grid sizes: r=%.15e, phi=%.15e, zeta=%.15e\n", r_grid_size, phi_grid_size, z_grid_size);
 
 
     // Get Boozer coordinates of current position
@@ -365,14 +369,14 @@ __host__ __device__ void build_state(particle_t& p, int deriv_id, double* srange
     // double z = loc[2];
 
 
-    p.i = 3*((int) ((s - srange_arr[0]) / s_grid_size) / 3);
-    p.j = 3*((int) ((t - trange_arr[0]) / theta_grid_size) / 3);
-    p.k = 3*((int) ((z - zrange_arr[0]) / zeta_grid_size) / 3);
+    p.i = 3*((int) ((r - rrange_arr[0]) / r_grid_size) / 3);
+    p.j = 3*((int) ((phi - phirange_arr[0]) / phi_grid_size) / 3);
+    p.k = 3*((int) ((z - zrange_arr[0]) / z_grid_size) / 3);
 
 
 
-    p.i = min(p.i, (int)srange_arr[2]-4);
-    p.j = min(p.j, (int)trange_arr[2]-4);
+    p.i = min(p.i, (int)rrange_arr[2]-4);
+    p.j = min(p.j, (int)phirange_arr[2]-4);
     p.k = min(p.k, (int)zrange_arr[2]-4);
 
     // printf("i=%d, j=%d, k=%d\n", p.i, p.j, p.k);
@@ -381,16 +385,16 @@ __host__ __device__ void build_state(particle_t& p, int deriv_id, double* srange
     // normalized positions in local grid wrt e.g. r at index i
     // maps the position to [0,3] in the "meta grid"
 
-    double s_rel = (s -  p.i*s_grid_size - srange_arr[0]) / s_grid_size;
-    double theta_rel = (t -  p.j*theta_grid_size - trange_arr[0]) / theta_grid_size;
-    double zeta_rel = (z - p.k*zeta_grid_size - zrange_arr[0]) / zeta_grid_size;
+    double r_rel = (r -  p.i*r_grid_size - rrange_arr[0]) / r_grid_size;
+    double phi_rel = (phi -  p.j*phi_grid_size - phirange_arr[0]) / phi_grid_size;
+    double z_rel = (z - p.k*z_grid_size - zrange_arr[0]) / z_grid_size;
     
     // printf("normalized positions: s_rel=%.15e, theta_rel=%.15e, zeta_rel=%.15e\n", s_rel, theta_rel, zeta_rel);
 
 
-    shape(s_rel, p.s_shape);
-    shape(theta_rel, p.t_shape);
-    shape(zeta_rel, p.z_shape);
+    shape(r_rel, p.r_shape);
+    shape(phi_rel, p.phi_shape);
+    shape(z_rel, p.z_shape);
 
 }
 
@@ -550,7 +554,34 @@ __global__ void particle_trace_kernel(particle_t* particles, double* srange_arr,
                         double tmax, double m, double q, double psi0, int nparticles){
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
     if(idx < nparticles){
-        trace_particle(particles[idx], srange_arr, trange_arr, zrange_arr, quadpts_arr, tmax, m, q, psi0);
+        particle_t p_local;
+        p_local.state[0] = particles[idx].state[0];
+        p_local.state[1] = particles[idx].state[1];
+        p_local.state[2] = particles[idx].state[2];
+        p_local.state[3] = particles[idx].state[3];
+        p_local.v_perp = particles[idx].v_perp;
+        p_local.v_total = particles[idx].v_total;
+        p_local.has_left = false;
+        p_local.t = 0;
+        
+        p_local.step_accept = 0;
+        p_local.step_attempt = 0;
+        p_local.id = particles[idx].id;
+        trace_particle(p_local, srange_arr, trange_arr, zrange_arr, quadpts_arr, tmax, m, q, psi0);
+
+
+        particles[idx].state[0] = p_local.state[0];
+        particles[idx].state[1] = p_local.state[1];
+        particles[idx].state[2] = p_local.state[2];
+        particles[idx].state[3] = p_local.state[3];
+        particles[idx].v_perp = p_local.v_perp;
+        particles[idx].v_total = p_local.v_total;
+        particles[idx].has_left = p_local.has_left;
+        particles[idx].t = p_local.t;
+        
+        particles[idx].step_accept = p_local.step_accept;
+        particles[idx].step_attempt = p_local.step_attempt;
+        particles[idx].id = p_local.id;
     }
 }
 
@@ -916,20 +947,20 @@ __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* srange, 
         double* out_arr  =  out + idx*n;
 
         particle_t p;
-        double s = loc_arr[0];
-        double t = loc_arr[1];
+        double x = loc_arr[0]*cos(loc_arr[1]);
+        double y = loc_arr[0]*sin(loc_arr[1]);
         double z = loc_arr[2];
 
-        p.state[0] = s*cos(t);
-        p.state[1] = s*sin(t);
+        p.state[0] = x;
+        p.state[1] = y;
         p.state[2] = z;
 
         p.dt = 1e-3; //needed for build_state
 
         // printf("s=%.15e, t=%.15e, z=%.15e\n", s, t, z);
-        // printf("y1=%.15e, y2=%.15e, z=%.15e\n", p.state[0], p.state[1], p.state[2]);
+        printf("x=%.15e, y=%.15e, z=%.15e\n", p.state[0], p.state[1], p.state[2]);
         build_state(p, 0, srange, trange, zrange);
-        // printf("xtemp=%.15e, %.15e, %.15e\n", p.x_temp[0], p.x_temp[1], p.x_temp[2]);
+        printf("xtemp=%.15e, %.15e, %.15e\n", p.x_temp[0], p.x_temp[1], p.x_temp[2]);
 
         interpolate(p, quad_pts, out_arr, srange, trange, zrange, n);
 
@@ -937,8 +968,10 @@ __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* srange, 
 
 
         if(p.symmetry_exploited){
-            out_arr[2] *= -1.0;
-            out_arr[3] *= -1.0;
+            out_arr[0] *= -1.0;
+            out_arr[4] *= -1.0;
+            out_arr[5] *= -1.0;
+
         }
 
 
@@ -991,7 +1024,7 @@ extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_p
 
 
 
-    int nthreads = 256;
+    int nthreads = 384;
     int nblks = n_points / nthreads + 1;
 
     cudaEvent_t start, stop;
@@ -1132,15 +1165,41 @@ __global__ void test_gpu_timestep_kernel(particle_t* particles, double* srange_a
                         double m, double q, double psi0, int nparticles){
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
     if(idx < nparticles){
-        setup_particle(particles[idx], srange_arr, trange_arr, zrange_arr, quadpts_arr, 1e-2, m, q, psi0);
+        particle_t p_local;
+        p_local.state[0] = particles[idx].state[0];
+        p_local.state[1] = particles[idx].state[1];
+        p_local.state[2] = particles[idx].state[2];
+        p_local.state[3] = particles[idx].state[3];
+        p_local.v_perp = particles[idx].v_perp;
+        p_local.v_total = particles[idx].v_total;
+        p_local.has_left = false;
+        p_local.t = 0;
+        
+        p_local.step_accept = 0;
+        p_local.step_attempt = 0;
+        p_local.id = particles[idx].id;
+        setup_particle(p_local, srange_arr, trange_arr, zrange_arr, quadpts_arr, 1e-2, m, q, psi0);
 
-        while(particles[idx].t == 0.0){
+        while(p_local.t == 0.0){
             for(int k=0; k<7; ++k){
-                build_state(particles[idx], k, srange_arr, trange_arr, zrange_arr);
-                calc_derivs(particles[idx], particles[idx].derivs + 6*k, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, particles[idx].mu, psi0);
+                build_state(p_local, k, srange_arr, trange_arr, zrange_arr);
+                calc_derivs(p_local, p_local.derivs + 6*k, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p_local.mu, psi0);
             }
-            adjust_time(particles[idx], 1e-2);
+            adjust_time(p_local, 1e-2);
         }
+
+        particles[idx].state[0] = p_local.state[0];
+        particles[idx].state[1] = p_local.state[1];
+        particles[idx].state[2] = p_local.state[2];
+        particles[idx].state[3] = p_local.state[3];
+        particles[idx].v_perp = p_local.v_perp;
+        particles[idx].v_total = p_local.v_total;
+        particles[idx].has_left = p_local.has_left;
+        particles[idx].t = p_local.t;
+        
+        particles[idx].step_accept = p_local.step_accept;
+        particles[idx].step_attempt = p_local.step_attempt;
+        particles[idx].id = p_local.i;
     }
     return;
 }
