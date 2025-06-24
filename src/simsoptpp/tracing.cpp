@@ -579,11 +579,33 @@ void particle_guiding_center_boozer_derivs(
     auto rhs_class = GuidingCenterVacuumBoozerRHS<xt::pytensor>(field, m, q, mu);
 
     rhs_class(y, out, 0.0);
+}
+
+
+// compute derivative for a single point
+void particle_guiding_center_cartesian_derivs(
+        shared_ptr<MagneticField<xt::pytensor>> field, array<double, 3> rphiz_init, array<double, 4>&  out,
+        double m, double q, double vtotal, double vtang)
+{
+    typename MagneticField<xt::pytensor>::Tensor2 rphiz({{rphiz_init[0], rphiz_init[1], rphiz_init[2]}});
+    field->set_points_cyl(rphiz);
+
+    double modB = field->AbsB()(0);
+    double vperp2 = vtotal*vtotal - vtang*vtang;
+    double mu = vperp2/(2*modB);
+
+    double r = rphiz_init[0];
+    double phi = rphiz_init[1];
+
+    array<double, 4> y = {r*cos(phi), r*sin(phi), rphiz_init[2], vtang};
+    auto rhs_class = GuidingCenterVacuumRHS<xt::pytensor>(field, m, q, mu);
+
+    rhs_class(y, out, 0.0);
 
 }
 
 
-py::array_t<double> simsopt_derivs(shared_ptr<BoozerMagneticField<xt::pytensor>> field, py::array_t<double> loc, double m, double q, double vtotal, double vtang){
+py::array_t<double> simsopt_derivs(shared_ptr<MagneticField<xt::pytensor>> field, py::array_t<double> loc, double m, double q, double vtotal, double vtang){
 
 
     py::buffer_info loc_buf = loc.request();
@@ -593,21 +615,11 @@ py::array_t<double> simsopt_derivs(shared_ptr<BoozerMagneticField<xt::pytensor>>
     array<double, 3> stz = {loc_arr[0], loc_arr[1], loc_arr[2]};
 
     array<double, 4> derivs;
-    particle_guiding_center_boozer_derivs(field, stz, derivs, m, q, vtotal, vtang);
+    particle_guiding_center_cartesian_derivs(field, stz, derivs, m, q, vtotal, vtang);
 
     for(int i=0; i<4; ++i){
         out[i] = derivs[i];
     }
-
-    double s = loc_arr[0];
-    double theta = loc_arr[1];
-    
-    // map to "pseudo-Cartesian coordinates"
-    // double dy1dt = out[0]*cos(theta) - s * sin(theta) * out[1];
-    // double dy2dt = out[0]*sin(theta) + s * cos(theta) * out[1];
-
-    // out[0] = dy1dt;
-    // out[1] = dy2dt;
 
 
     auto result = py::array_t<double>(4, out);

@@ -5,77 +5,81 @@ from numpy.testing import assert_raises
 import numpy as np
 import os
 from simsopt._core import load
-from simsopt.geo import SurfaceXYZTensorFourier
+from simsopt.geo import SurfaceRZFourier
+from simsopt.configs import get_ncsx_data
+from simsopt.field import (BiotSavart, InterpolatedField, coils_via_symmetries, trace_particles_starting_on_curve,
+                           SurfaceClassifier, LevelsetStoppingCriterion, plot_poincare_data)
 
-from simsopt.field import (BoozerRadialInterpolant, InterpolatedBoozerField, trace_particles_boozer,
-                           MinToroidalFluxStoppingCriterion, MaxToroidalFluxStoppingCriterion,
-                           ToroidalTransitStoppingCriterion, compute_resonances)
-from simsopt.mhd import Vmec
-
-def setup_interpolant(field, nfp, n_metagrid_pts):
+def setup_interpolant(field, sc_particle, nfp, n_metagrid_pts):
     ### NEW INTERPOLANT
 
-    srange = (0, 1.0, 3*n_metagrid_pts+1)
-    trange = (0, np.pi, 3*n_metagrid_pts+1)
-    zrange = (0, 2*np.pi/nfp, 3*n_metagrid_pts+1)
+    # srange = (0, 1.0, 3*n_metagrid_pts+1)
+    # trange = (0, np.pi, 3*n_metagrid_pts+1)
+    # zrange = (0, 2*np.pi/nfp, 3*n_metagrid_pts+1)
+    r_range = (field.r_range[0], field.r_range[1], 3*field.r_range[2]+1)
+    phi_range = (field.phi_range[0], field.phi_range[1], 3*field.phi_range[2]+1)
+    z_range = (field.z_range[0], field.z_range[1], 3*field.z_range[2]+1)
 
-    s_grid = np.linspace(srange[0], srange[1], srange[2])
-    theta_grid = np.linspace(trange[0], trange[1], trange[2])
-    zeta_grid = np.linspace(zrange[0], zrange[1], zrange[2])
+    r_grid = np.linspace(r_range[0], r_range[1], r_range[2])
+    phi_grid = np.linspace(phi_range[0], phi_range[1], phi_range[2])
+    z_grid = np.linspace(z_range[0], z_range[1], z_range[2])
 
-    quad_pts = np.empty((srange[2]*trange[2]*zrange[2], 3))
-    for i in range(srange[2]):
-        for j in range(trange[2]):
-            for k in range(zrange[2]):
-                quad_pts[trange[2]*zrange[2]*i + zrange[2]*j + k, :] = [s_grid[i], theta_grid[j], zeta_grid[k]]
+    quad_pts = np.empty((r_range[2]*phi_range[2]*z_range[2], 3))
+    for i in range(r_range[2]):
+        for j in range(phi_range[2]):
+            for k in range(z_range[2]):
+                quad_pts[phi_range[2]*z_range[2]*i + z_range[2]*j + k, :] = [r_grid[i], phi_grid[j], z_grid[k]]
 
-    field.set_points(quad_pts)
-
+    field.set_points_cyl(quad_pts)
 
     # Quantities to interpolate
-    G = field.G()
-    iota = field.iota()
-    modB = field.modB()
-    modB_derivs = field.modB_derivs()
-    quad_info = np.hstack((modB, modB_derivs, G, iota))
+    B = field.B_cyl()
+    GradAbsB = field.GradAbsB_cyl()
+        
+    signed_dist_vals = sc_particle.evaluate_rphiz(quad_pts)
+
+    quad_info = np.hstack((B, GradAbsB, signed_dist_vals))
     quad_info = np.ascontiguousarray(quad_info)
 
-    return srange, trange, zrange, quad_info
+    return r_range, phi_range, z_range, quad_info
 
 
-def test_interpolant_bfield(field, nfp, n_metagrid_pts, n_test_pts):
+def test_interpolant_bfield(field, sc_particle, nfp, n_metagrid_pts, n_test_pts):
+
+    r_range = field.r_range
+    phi_range = field.phi_range
+    z_range = field.z_range
 
     # generate test points
-    s = np.random.uniform(low=0, high=1, size=(n_test_pts,1))
-    t = np.random.uniform(low=0, high=2*np.pi, size=(n_test_pts,1))
-    z = np.random.uniform(low=0, high=2*np.pi, size=(n_test_pts,1))
-    stz = np.hstack((s,t,z))
+    r = np.random.uniform(low=r_range[0], high=r_range[1], size=(n_test_pts,1))
+    phi = np.random.uniform(low=phi_range[0], high=phi_range[1], size=(n_test_pts,1))
+    z = np.random.uniform(low=z_range[0], high=z_range[1], size=(n_test_pts,1))
+    rphiz = np.hstack((r,phi,z))
+    rphiz = np.ascontiguousarray(rphiz)
 
     # SIMSOPT INTERPOLANT
-    field.set_points(stz)
-    G = field.G()
-    iota = field.iota()
-    modB = field.modB()
-    modB_derivs = field.modB_derivs()
-    simsopt_interpolation = np.hstack((modB, modB_derivs, G, iota))
+    field.set_points_cyl(rphiz)
+    B = field.B_cyl()
+    GradAbsB = field.GradAbsB_cyl()
+    signed_dist_vals = sc_particle.evaluate_rphiz(rphiz)
+    simsopt_interpolation = np.hstack((B, GradAbsB, signed_dist_vals))
 
     ## NEW INTERPOLANT
-    srange, trange, zrange, quad_info = setup_interpolant(field, nfp, n_metagrid_pts)
-    stz = np.ascontiguousarray(stz)
+    r_range, phi_range, z_range, quad_info = setup_interpolant(field, sc_particle, nfp, n_metagrid_pts)
 
     # Calculate interpolation
-
-    new_interpolation = sopp.test_gpu_interpolation(quad_info, srange, trange, zrange, stz, 6, stz.shape[0])
-    new_interpolation = np.reshape(new_interpolation, (stz.shape[0], 6))
+    new_interpolation = sopp.test_gpu_interpolation(quad_info, r_range, phi_range, z_range, rphiz, 7, rphiz.shape[0])
+    new_interpolation = np.reshape(new_interpolation, (rphiz.shape[0], 7))
 
     print(np.abs(simsopt_interpolation - new_interpolation) / simsopt_interpolation)
     rel_err = np.abs((simsopt_interpolation - new_interpolation) / simsopt_interpolation)
+    rel_err = rel_err[:, :-2] # don't test boundary distance for now
     diff = np.max(rel_err)
     print("Maximum relative error in interpolation values on {} points: {}".format(n_test_pts, diff))
 
     print("culprit particle:")
     row_index = np.argmax(rel_err) // rel_err.shape[1]
-    print(stz[row_index, :])
+    print(rphiz[row_index, :])
     print("simsopt", simsopt_interpolation[row_index, :])
     print("new", new_interpolation[row_index, :])
     print(rel_err[row_index, :])
@@ -83,17 +87,35 @@ def test_interpolant_bfield(field, nfp, n_metagrid_pts, n_test_pts):
 
 if __name__ == "__main__":
     ### CREATE A FIELD FOR TRACING
-    filename = os.path.join('./examples/2_Intermediate/inputs/input.LandremanPaul2021_QH')
-    vmec = Vmec(filename)
+    nfp = 3
+    curves, currents, ma = get_ncsx_data()
+    coils = coils_via_symmetries(curves, currents, nfp, True)
+    curves = [c.curve for c in coils]
+    bs = BiotSavart(coils)
+    # proc0_print("Mean(|B|) on axis =", np.mean(np.linalg.norm(bs.set_points(ma.gamma()).B(), axis=1)))
+    # proc0_print("Mean(Axis radius) =", np.mean(np.linalg.norm(ma.gamma(), axis=1)))
 
-    order = 3
-    bri = BoozerRadialInterpolant(vmec, order, enforce_vacuum=True)
-    nfp = vmec.wout.nfp
+    mpol = 5
+    ntor = 5
+    stellsym = True
+    s = SurfaceRZFourier.from_nphi_ntheta(mpol=mpol, ntor=ntor, stellsym=stellsym, nfp=nfp,
+                                        range="full torus", nphi=64, ntheta=24)
+    s.fit_to_curve(ma, 0.20, flip_theta=False)
+
+    n_metagrid_pts = 30
     degree = 3
-    n_metagrid_pts = 15
-    srange = (0, 1, n_metagrid_pts)
-    thetarange = (0, np.pi, n_metagrid_pts)
-    zetarange = (0, 2*np.pi/nfp, n_metagrid_pts)
-    field = InterpolatedBoozerField(bri, degree, srange, thetarange, zetarange, True, nfp=nfp, stellsym=True)
+    rs = np.linalg.norm(s.gamma()[:, :, 0:2], axis=2)
+    zs = s.gamma()[:, :, 2]
+    sc_particle = SurfaceClassifier(s, h=0.1, p=2)
 
-    test_interpolant_bfield(field, nfp, n_metagrid_pts, 100000)
+
+    rrange = (np.min(rs), np.max(rs), n_metagrid_pts)
+    phirange = (0, 2*np.pi/nfp, n_metagrid_pts)
+    # exploit stellarator symmetry and only consider positive z values:
+    zrange = (0, np.max(zs), n_metagrid_pts)
+    print(rrange, phirange, zrange)
+    bsh = InterpolatedField(
+        bs, degree, rrange, phirange, zrange, True, nfp=nfp, stellsym=True
+    )
+    np.random.seed(1800)
+    test_interpolant_bfield(bsh, sc_particle, nfp, n_metagrid_pts, 10000)

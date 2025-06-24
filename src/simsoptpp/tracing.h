@@ -171,4 +171,4 @@ fieldline_tracing(
         double tmax, double tol, vector<double> phis, vector<shared_ptr<StoppingCriterion>> stopping_criteria);
 
 
-py::array_t<double> simsopt_derivs(shared_ptr<BoozerMagneticField<xt::pytensor>> field, py::array_t<double> loc, double m, double q, double vtotal, double vtang);
+py::array_t<double> simsopt_derivs(shared_ptr<MagneticField<xt::pytensor>> field, py::array_t<double> loc, double m, double q, double vtotal, double vtang);
