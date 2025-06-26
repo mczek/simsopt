@@ -16,6 +16,23 @@ namespace py = pybind11;
 #include "boozermagneticfield.h"
 #include "regular_grid_interpolant_3d.h"
 
+// #define CHECK_CUDA_ERROR(err) \
+//     if (err != cudaSuccess) { \
+//         fprintf(stderr, "CUDA Error: %s at %s:%d\n", cudaGetErrorString(err), __FILE__, __LINE__); \
+//         exit(EXIT_FAILURE); \
+//     }
+
+#define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
+inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
+{
+   if (code != cudaSuccess) 
+   {
+      fprintf(stderr,"GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
+      if (abort) exit(code);
+   }
+}
+
+
 // Particle Data Structure
 typedef struct particle_t {
     double state[4];
@@ -34,6 +51,7 @@ typedef struct particle_t {
     bool symmetry_exploited;
     int id;
     int step_attempt, step_accept;
+    double surf_dist;
 } particle_t;
 
 __global__ void addKernel(int *c, const int* a, const int* b, int size){
@@ -102,17 +120,23 @@ __host__  __device__ __forceinline__ void interpolate(particle_t& p, const doubl
                 int wrap_j = (p.j+jj) % nphi;
                 for(int kk=0; kk<=3; ++kk){ // zeta grid
                     int wrap_k = (p.k+kk) % nz;
-                    int row_idx = (p.i+ii)*nphi*nz + wrap_j*nz + wrap_k;                 
+                    int row_idx = (p.i+ii)*nphi*nz + wrap_j*nz + wrap_k;  
+                    // printf("row_index=%d\n", row_idx);               
+                    // printf("ii=%d, jj=%d, kk=%d, n=%d\n", ii, jj, kk, n);
                     double shape_val = p.r_shape[ii]*p.phi_shape[jj]*p.z_shape[kk];
-                    
+                    // printf("shape_val = %.15e\n", shape_val);
                     for(int zz=0; zz<n; ++zz){
+                        // printf("index access: %d\n", n*row_idx + zz);
                         out[zz] += data[n*row_idx + zz]*shape_val;
+                        // printf("wrote to interpolant element %d\n", zz);
                     }
                 }
             }
         }
 
     }
+
+    // printf("return from interpolant\n");
 
 }
 
@@ -138,6 +162,8 @@ __host__  __device__ void calc_derivs(particle_t& p, double* out, double* rrange
 
     // printf("interpolants:  %.15e, %.15e, %.15e, %.15e, %.15e, %.15e\n", interpolants[0], interpolants[1], interpolants[2], interpolants[3], interpolants[4], interpolants[5]);
     
+
+
     double x = p.x_temp[0];
     double y = p.x_temp[1];
     double z = p.x_temp[2];
@@ -191,6 +217,11 @@ __host__  __device__ void calc_derivs(particle_t& p, double* out, double* rrange
 
     out[4] = AbsB; // AbsB
     out[5] = interpolants[6]; // boundary dist fn
+
+    p.surf_dist = interpolants[6];
+
+	//printf("derivative evaluated at %.15e, %.15e, %.15e, %.15e : %.15e, %.15e, %.15e, %.15e\n", x, y, z, v_par, out[0], out[1], out[2], out[3]);
+	//printf("interpolant values : %.15e, %.15e, %.15e, %.15e, %.15e, %.15e\n", interpolants[0], interpolants[1], interpolants[2], interpolants[3], interpolants[4], interpolants[5], interpolants[6]);
 
 }
 
@@ -276,7 +307,7 @@ __host__ __device__ void build_state(particle_t& p, int deriv_id, double* rrange
     // exploit stellarator symmetry
     p.symmetry_exploited = z < 0;
     if(p.symmetry_exploited){
-        z = - z;
+        z = -z;
         phi = 2*M_PI - phi;
         phi = fmod(phi, period);
         phi += period*(phi < 0);
@@ -286,6 +317,8 @@ __host__ __device__ void build_state(particle_t& p, int deriv_id, double* rrange
     p.interpolation_loc[0] = r;
     p.interpolation_loc[1] = phi;
     p.interpolation_loc[2] = z;
+
+    //printf("deriv pt: r=%.15e, phi=%.15e, z=%.15e\n", r, phi, z);
 
     /*
     * index into the grid and calculate weights
@@ -303,6 +336,10 @@ __host__ __device__ void build_state(particle_t& p, int deriv_id, double* rrange
     p.i = min(p.i, (int)rrange_arr[2]-4);
     p.j = min(p.j, (int)phirange_arr[2]-4);
     p.k = min(p.k, (int)zrange_arr[2]-4);
+
+    p.i = max(p.i, 0); // if r too small to be in the device, extrapolate
+
+    // printf("x=%.15e, y=%.15e, z=%.15e, deriv pt: r=%.15e, phi=%.15e, z=%.15e interpolant indices: i=%d, j=%d, k=%d\n", p.x_temp[0], p.x_temp[1], p.x_temp[2], r, phi, z, p.i, p.j, p.k);
 
     // normalized positions in local grid wrt e.g. r at index i
     // maps the position to [0,3] in the "meta grid"
@@ -332,9 +369,13 @@ __host__ __device__ void setup_particle(particle_t& p, double* srange_arr, doubl
     p.mu = v_perp2 * denom;
     // printf("mu = %.15e, v_perp2=%.15e, denom=%.15e\n", p.mu, v_perp2, denom);
 
-    p.dtmax = 0.5*M_PI*abs(p.derivs[5]) / (p.derivs[4]*p.v_total);
+    // can at most do quarter of a revolution per step
+    double r = sqrt(p.state[0]*p.state[0] + p.state[1]*p.state[1]);
+    double v_total = sqrt(v_perp2 + p.state[3]*p.state[3]);
+    p.dtmax = r*0.5*M_PI/v_total;
+    // p.dtmax = 0.5*M_PI*abs(p.derivs[5]) / (p.derivs[4]*p.v_total);
     p.dt = 1e-3*p.dtmax;
-
+	//printf("initial dt = %.15e, r = %.15e, v_total = %.15e\n", p.dt, r, v_total);
 }
 
 __host__ __device__ void adjust_time(particle_t& p, double tmax){
@@ -371,6 +412,7 @@ __host__ __device__ void adjust_time(particle_t& p, double tmax){
     }
     p.step_attempt++;
 
+	//printf("err = %.15e\n", err);
 
     if (err <= 1.0) {
         // Accept the step
@@ -382,8 +424,7 @@ __host__ __device__ void adjust_time(particle_t& p, double tmax){
         p.state[2] = p.x_temp[2];
         p.state[3] = p.x_temp[3];
 
-        double s = sqrt(p.state[0]*p.state[0] + p.state[1]*p.state[1]);
-        p.has_left = s >= 1;
+        p.has_left = p.surf_dist < 0;
         p.step_accept++;
 
 
@@ -406,8 +447,7 @@ __host__ __device__    void trace_particle(particle_t& p, double* srange_arr, do
         adjust_time(p, tmax);
         
         double s = sqrt(p.state[0]*p.state[0] + p.state[1]*p.state[1]);
-        if(s >= 1){
-            p.has_left = true;
+        if(p.has_left){
             return;
         }
         counter++;
@@ -429,10 +469,12 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
         double tmax, double tol, int nparticles){
 
     //  read data in from python
-    auto ptr = stz_init.data();
-    int size = stz_init.size();
-    double stz_init_arr[size];
-    std::memcpy(stz_init_arr, ptr, size * sizeof(double));
+    py::buffer_info stz_init_buf = stz_init.request();
+    double* stz_init_arr = static_cast<double*>(stz_init_buf.ptr);
+    // auto ptr = stz_init.data();
+    // int size = stz_init.size();
+    // double stz_init_arr[size];
+    // std::memcpy(stz_init_arr, ptr, size * sizeof(double));
     
     py::buffer_info vtang_buf = vtang.request();
     double* vtang_arr = static_cast<double*>(vtang_buf.ptr);
@@ -795,41 +837,18 @@ __global__ void test_gpu_timestep_kernel(particle_t* particles, double* srange_a
                         double m, double q, int nparticles){
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
     if(idx < nparticles){
-        particle_t p_local;
-        p_local.state[0] = particles[idx].state[0];
-        p_local.state[1] = particles[idx].state[1];
-        p_local.state[2] = particles[idx].state[2];
-        p_local.state[3] = particles[idx].state[3];
-        p_local.v_perp = particles[idx].v_perp;
-        p_local.v_total = particles[idx].v_total;
-        p_local.has_left = false;
-        p_local.t = 0;
-        
-        p_local.step_accept = 0;
-        p_local.step_attempt = 0;
-        p_local.id = particles[idx].id;
-        setup_particle(p_local, srange_arr, trange_arr, zrange_arr, quadpts_arr, 1e-2, m, q);
-
-        while(p_local.t == 0.0){
+    // printf("tracing particle %d\n", idx);
+        setup_particle(particles[idx], srange_arr, trange_arr, zrange_arr, quadpts_arr, 1e-2, m, q);
+        while(particles[idx].t == 0.0){
             for(int k=0; k<7; ++k){
-                build_state(p_local, k, srange_arr, trange_arr, zrange_arr);
-                calc_derivs(p_local, p_local.derivs + 6*k, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, p_local.mu);
+                // printf("building state %d\n", k);
+                build_state(particles[idx], k, srange_arr, trange_arr, zrange_arr);
+                // printf("calclulating derivative %d\n", k);
+                calc_derivs(particles[idx], particles[idx].derivs + 6*k, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, particles[idx].mu);
             }
-            adjust_time(p_local, 1e-2);
+            adjust_time(particles[idx], 1e-2);
         }
-
-        particles[idx].state[0] = p_local.state[0];
-        particles[idx].state[1] = p_local.state[1];
-        particles[idx].state[2] = p_local.state[2];
-        particles[idx].state[3] = p_local.state[3];
-        particles[idx].v_perp = p_local.v_perp;
-        particles[idx].v_total = p_local.v_total;
-        particles[idx].has_left = p_local.has_left;
-        particles[idx].t = p_local.t;
-        
-        particles[idx].step_accept = p_local.step_accept;
-        particles[idx].step_attempt = p_local.step_attempt;
-        particles[idx].id = p_local.i;
+        // printf("tracing particle %d finished at t=%.15e\n", idx, particles[idx].t);
     }
     return;
 }
@@ -841,10 +860,8 @@ extern "C" vector<double> test_timestep(py::array_t<double> quad_pts, py::array_
         double tol, int nparticles){
 
     //  read data in from python
-    auto ptr = stz_init.data();
-    int size = stz_init.size();
-    double stz_init_arr[size];
-    std::memcpy(stz_init_arr, ptr, size * sizeof(double));
+    py::buffer_info stz_init_buf = stz_init.request();
+    double* stz_init_arr = static_cast<double*>(stz_init_buf.ptr);
 
     py::buffer_info vtang_buf = vtang.request();
     double* vtang_arr = static_cast<double*>(vtang_buf.ptr);
@@ -869,19 +886,18 @@ extern "C" vector<double> test_timestep(py::array_t<double> quad_pts, py::array_
     for(int i=0; i<nparticles; ++i){
         int start = 3*i;
 
-        double s = stz_init_arr[start];
-        double theta = stz_init_arr[start+1];
+        double r = stz_init_arr[start];
+        double phi = stz_init_arr[start+1];
         
-        // convert to alternative coordinates
-        particles[i].state[0] = s*cos(theta);
-        particles[i].state[1] = s*sin(theta);
-        
-        particles[i].state[2] = stz_init_arr[start+2];
+        // convert to cartesian coordinates
+        particles[i].state[0] = r*cos(phi); // x
+        particles[i].state[1] = r*sin(phi); // y
+        particles[i].state[2] = stz_init_arr[start+2]; // z
         particles[i].state[3] = vtang_arr[i];
         particles[i].v_perp = sqrt(vtotal*vtotal -  vtang_arr[i]*vtang_arr[i]);
         particles[i].v_total = vtotal;
         particles[i].has_left = false;
-        particles[i].t = 0;
+        particles[i].t = 0.0;
         
         particles[i].step_accept = 0;
         particles[i].step_attempt = 0;
@@ -889,25 +905,27 @@ extern "C" vector<double> test_timestep(py::array_t<double> quad_pts, py::array_
     }
     
     particle_t* particles_d;
-    cudaMalloc((void**)&particles_d, nparticles * sizeof(particle_t));
-    cudaMemcpy(particles_d, particles, nparticles * sizeof(particle_t), cudaMemcpyHostToDevice);
+    gpuErrchk( cudaMalloc((void**)&particles_d, nparticles * sizeof(particle_t)) );
+    gpuErrchk( cudaMemcpy(particles_d, particles, nparticles * sizeof(particle_t), cudaMemcpyHostToDevice) );
 
     double* srange_d;
-    cudaMalloc((void**)&srange_d, 3 * sizeof(double));
-    cudaMemcpy(srange_d, srange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
+    gpuErrchk( cudaMalloc((void**)&srange_d, 3 * sizeof(double)) );
+    gpuErrchk( cudaMemcpy(srange_d, srange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice) );
 
     double* zrange_d;
-    cudaMalloc((void**)&zrange_d, 3 * sizeof(double));
-    cudaMemcpy(zrange_d, zrange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
+    gpuErrchk( cudaMalloc((void**)&zrange_d, 3 * sizeof(double)) );
+    gpuErrchk(cudaMemcpy(zrange_d, zrange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice) );
 
     double* trange_d;
-    cudaMalloc((void**)&trange_d, 3 * sizeof(double));
-    cudaMemcpy(trange_d, trange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
+    gpuErrchk(cudaMalloc((void**)&trange_d, 3 * sizeof(double)) );
+    gpuErrchk(cudaMemcpy(trange_d, trange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice) );
 
 
     double* quadpts_d;
-    cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(double));
-    cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(double), cudaMemcpyHostToDevice);
+
+    std::cout << "quadpts.size() = " << quad_pts.size() << "\n";
+    gpuErrchk( cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(double)) );
+    gpuErrchk( cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(double), cudaMemcpyHostToDevice) );
 
     int nthreads = 256;
     int nblks = nparticles / nthreads + 1;
@@ -920,8 +938,17 @@ extern "C" vector<double> test_timestep(py::array_t<double> quad_pts, py::array_
     cudaEventRecord(start);
     test_gpu_timestep_kernel<<<nblks, nthreads>>>(particles_d, srange_d, trange_d, zrange_d, quadpts_d, m, q,  nparticles);
 
-    cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost);
+    gpuErrchk( cudaPeekAtLastError() );
+    gpuErrchk( cudaDeviceSynchronize() );
 
+    // cudaDeviceSynchronize();
+    // cudaError_t err = cudaGetLastError(); 
+    // CHECK_CUDA_ERROR(err);
+    gpuErrchk( cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost) );
+
+
+    // err = cudaGetLastError(); 
+    // CHECK_CUDA_ERROR(err);
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
     float milliseconds = 0;
@@ -945,12 +972,13 @@ extern "C" vector<double> test_timestep(py::array_t<double> quad_pts, py::array_
         particle_output[7*i + 2] = z;
         particle_output[7*i + 3] = v_par;
         particle_output[7*i + 4] = particles[i].t;
+        // std::cout << "copied back t=" << particles[i].t << "\n";
         particle_output[7*i + 5] = particles[i].step_accept;
         particle_output[7*i + 6] = particles[i].step_attempt;
     }
 
 
     delete[] particles;
-
+    gpuErrchk( cudaFree(particles_d) );
     return particle_output;
 }

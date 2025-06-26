@@ -1,5 +1,5 @@
 import simsoptpp as sopp
-from simsopt.field import (BoozerRadialInterpolant, InterpolatedBoozerField, trace_particles_boozer,
+from simsopt.field import (BoozerRadialInterpolant, InterpolatedBoozerField, trace_particles,
                            MinToroidalFluxStoppingCriterion, MaxToroidalFluxStoppingCriterion,
                            ToroidalTransitStoppingCriterion, IterationStoppingCriterion, compute_resonances)
 from simsopt.mhd import Vmec
@@ -22,9 +22,9 @@ def test_derivs(field, sc_praticle, nfp, n_metagrid_pts, n_test_pts, verify=True
         z_range = field.z_range
 
         # generate test points
-        r = np.random.uniform(low=r_range[0], high=r_range[1], size=(n_test_pts,1))
+        r = np.random.uniform(low=r_range[0]+0.1, high=r_range[1]-0.1, size=(n_test_pts,1))
         phi = np.random.uniform(low=phi_range[0], high=phi_range[1], size=(n_test_pts,1))
-        z = np.random.uniform(low=z_range[0], high=z_range[1], size=(n_test_pts,1))
+        z = np.random.uniform(low=z_range[0]+0.1, high=z_range[1]-0.1, size=(n_test_pts,1))
         rphiz = np.hstack((r,phi,z))
         rphiz = np.ascontiguousarray(rphiz)
 
@@ -67,61 +67,101 @@ def test_derivs(field, sc_praticle, nfp, n_metagrid_pts, n_test_pts, verify=True
 
 
 
-def test_timestep(field, nfp, n_metagrid_pts, n_test_pts, verify=True):
+def test_timestep(field, sc_particle, nfp, n_metagrid_pts, n_test_pts, verify=True):
 
         # generate test points
-        s = np.random.uniform(low=0, high=0.95, size=(n_test_pts,1))
-        t = np.random.uniform(low=0, high=2*np.pi, size=(n_test_pts,1))
-        z = np.random.uniform(low=0, high=2*np.pi, size=(n_test_pts,1))
-        stz = np.hstack((s,t,z))
+        r_range = field.r_range
+        phi_range = field.phi_range
+        z_range = field.z_range
+
+        # generate test points
+        r = np.random.uniform(low=r_range[0]+0.1, high=r_range[1]-0.1, size=(n_test_pts,1))
+        phi = np.random.uniform(low=phi_range[0], high=phi_range[1], size=(n_test_pts,1))
+        z = np.random.uniform(low=z_range[0]+0.1, high=z_range[1]-0.1, size=(n_test_pts,1))
+        rphiz = np.hstack((r,phi,z))
+        rphiz = np.ascontiguousarray(rphiz)
 
         VELOCITY = np.sqrt(2 * ENERGY / MASS)
         vpar_init = np.random.uniform(-VELOCITY, VELOCITY, (n_test_pts,))
+        vpar_init = np.ascontiguousarray(vpar_init)
 
+
+
+        ### NEW INTERPOLANT
+        print("setting up new interpolant")
+        r_range, phi_range, z_range, quad_info = setup_interpolant(field, sc_particle, nfp, n_metagrid_pts)
+        quad_info = np.ascontiguousarray(quad_info)
+        # # for i in range(n_test_pts):
+        # print(r_range)
+        # print(phi_range),
+        # print(z_range)
+        # rphiz_test = rphiz[i, :]
+        # vpar_init_test = vpar_init[i]
+
+        # rphiz = np.array([[1.36825919, 0.61279615, 0.26253024]])
+        # vpar_init = [-6203622.275269774]
+        print("rphiz", rphiz)
+
+        # print(i, rphiz_test, vpar_init_test)
+        # print(quad_info.shape)
+        print("testing new timstep")
         
-
-        print("computing new timesteps")
-        srange, trange, zrange, quad_info = setup_interpolant(field, nfp, n_metagrid_pts)
-        stz = np.ascontiguousarray(stz)
-        psi0 = field.psi0
         last_time = sopp.test_timestep(
                 quad_pts=quad_info, 
-                srange=srange,
-                trange=trange,
-                zrange=zrange, 
-                stz_init=stz,
+                srange=r_range,
+                trange=phi_range,
+                zrange=z_range, 
+                stz_init=rphiz,
                 m=MASS, 
                 q=CHARGE, 
                 vtotal=np.sqrt(2*ENERGY/MASS),  
                 vtang=vpar_init, 
                 tol=1e-9, 
-                psi0=psi0, 
                 nparticles=n_test_pts)
 
 
+        # print("last_time", last_time)
+
         last_time = np.reshape(last_time, (n_test_pts, 7))
+
+        # print("last_time", last_time)
+        # print(last_time[:, 4])
 
         new_final_positions = np.array([[x[4], x[0], x[1], x[2], x[3]] for x in last_time])
 
+        # print("new final positions", new_final_positions)
 
         print("computing simsopt timestep")
 
         if verify:
-                gc_tys, gc_zeta_hits = trace_particles_boozer(
-                        field, stz, vpar_init, tmax=1e-2, mass=MASS, charge=CHARGE,
-                        Ekin=ENERGY, zetas=[0], tol=1e-9, stopping_criteria=[IterationStoppingCriterion(1)],
+                r = rphiz[:, 0].reshape(-1,1)
+                phi = rphiz[:, 1].reshape(-1,1)
+                z = rphiz[:, 2].reshape(-1,1)
+                x = r*np.cos(phi)
+                y = r*np.sin(phi)
+                print(x,y,z)
+                xyz = np.hstack((x,y,z))
+                print(xyz)
+                print(vpar_init)
+                print(xyz.shape)
+                print(len(vpar_init))
+                gc_tys, gc_zeta_hits = trace_particles(
+                        field, xyz, vpar_init, tmax=1e-2, mass=MASS, charge=CHARGE,
+                        Ekin=ENERGY, tol=1e-9, stopping_criteria=[IterationStoppingCriterion(1)],
                         forget_exact_path=True)
-                
+                print("done with simsopt timestep")
+                # print(gc_tys)
+                # print(gc_zeta_hits)
                 final_positions = np.array([x[-1] for x in gc_tys])
                 rel_err = np.abs((final_positions - new_final_positions) / final_positions)
                 diff = np.max(rel_err)
-                print(np.abs(final_positions - new_final_positions) / final_positions)
+                # print(np.abs(final_positions - new_final_positions) / final_positions)
 
                 print("Maximum relative error in final positions on {} points: {}".format(n_test_pts, diff))
 
                 print("culprit particle:")
                 row_index = np.argmax(rel_err) // rel_err.shape[1]
-                print(stz[row_index, :])
+                print(rphiz[row_index, :])
                 print(vpar_init[row_index])
                 print("simsopt", final_positions[row_index, :])
                 print("new", new_final_positions[row_index, :])
@@ -163,9 +203,9 @@ if __name__ == "__main__":
         np.random.seed(1800)
         # test_interpolant_bfield(bsh, sc_particle, nfp, n_metagrid_pts, 100000)
 
-        test_derivs(bsh, sc_particle, nfp, n_metagrid_pts, 100000)
+        # test_derivs(bsh, sc_particle, nfp, n_metagrid_pts, 100000)
 
-        # test_timestep(bsh, nfp, 15, 100000)
+        test_timestep(bsh, sc_particle, nfp, n_metagrid_pts, 100000)
 
 
         # derivs baseline
