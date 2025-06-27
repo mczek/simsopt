@@ -446,7 +446,6 @@ __host__ __device__    void trace_particle(particle_t& p, double* srange_arr, do
         }
         adjust_time(p, tmax);
         
-        double s = sqrt(p.state[0]*p.state[0] + p.state[1]*p.state[1]);
         if(p.has_left){
             return;
         }
@@ -503,10 +502,10 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
         double theta = stz_init_arr[start+1];
         
         // convert to alternative coordinates
-        particles[i].state[0] = s*cos(theta);
-        particles[i].state[1] = s*sin(theta);
+        particles[i].state[0] = stz_init_arr[start]; // x
+        particles[i].state[1] = stz_init_arr[start+1];// y
         
-        particles[i].state[2] = stz_init_arr[start+2];
+        particles[i].state[2] = stz_init_arr[start+2]; // z
         particles[i].state[3] = vtang_arr[i];
         particles[i].v_perp = sqrt(vtotal*vtotal -  vtang_arr[i]*vtang_arr[i]);
         particles[i].v_total = vtotal;
@@ -568,8 +567,8 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
         double v_par = particles[i].state[3];
 
         // last location in Boozer coordinates
-        particle_output[7*i] = sqrt(y1*y1 + y2*y2);
-        particle_output[7*i + 1] = atan2(y2, y1);
+        particle_output[7*i] = y1;
+        particle_output[7*i + 1] = y2;
         particle_output[7*i + 2] = z;
         particle_output[7*i + 3] = v_par;
         particle_output[7*i + 4] = particles[i].t;
