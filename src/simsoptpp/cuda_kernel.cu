@@ -16,11 +16,7 @@ namespace py = pybind11;
 #include "boozermagneticfield.h"
 #include "regular_grid_interpolant_3d.h"
 
-// #define CHECK_CUDA_ERROR(err) \
-//     if (err != cudaSuccess) { \
-//         fprintf(stderr, "CUDA Error: %s at %s:%d\n", cudaGetErrorString(err), __FILE__, __LINE__); \
-//         exit(EXIT_FAILURE); \
-//     }
+#define THREADS_PER_BLOCK 112 // 64 * 7 / 4
 
 #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
@@ -578,6 +574,7 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
 
 
     delete[] particles;
+    gpuErrchk( cudaFree(particles_d) );
 
     return particle_output;
 }
@@ -632,8 +629,27 @@ extern "C" py::array_t<double> test_interpolation(py::array_t<double> quad_pts, 
 }
 
 __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* srange, double* trange, double* zrange, double* loc, double* out, int n, int n_points){
+    __shared__ int index_i[THREADS_PER_BLOCK];
+    __shared__ int index_j[THREADS_PER_BLOCK];
+    __shared__ int index_k[THREADS_PER_BLOCK];
+    __shared__ double r_shape[4*THREADS_PER_BLOCK];
+    __shared__ double phi_shape[4*THREADS_PER_BLOCK];
+    __shared__ double z_shape[4*THREADS_PER_BLOCK];
+    __shared__ bool symm_exploited[THREADS_PER_BLOCK];
+    __shared__ bool is_particle[THREADS_PER_BLOCK];
+    __shared__ double workspace[THREADS_PER_BLOCK];
+
+    // set up shared arrays
+    is_particle[threadIdx.x] = false;
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
+
+    // printf("threadIdx.x = %d\n", threadIdx.x);
+    
+    // set up each particle and share information
     if(idx < n_points){
+        // printf("threadIdx.x = %d\n", threadIdx.x);
+
+        is_particle[threadIdx.x] = true;
         double* loc_arr = loc + 3*idx;
         double* out_arr  =  out + idx*n;
 
@@ -650,19 +666,75 @@ __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* srange, 
 
         // printf("x=%.15e, y=%.15e, z=%.15e\n", p.state[0], p.state[1], p.state[2]);
         build_state(p, 0, srange, trange, zrange);
-        // printf("xtemp=%.15e, %.15e, %.15e\n", p.x_temp[0], p.x_temp[1], p.x_temp[2]);
 
-        interpolate(p, quad_pts, out_arr, srange, trange, zrange, n);
+        index_i[threadIdx.x] = p.i;
+        index_j[threadIdx.x] = p.j;
+        index_k[threadIdx.x] = p.k;
 
-        if(p.symmetry_exploited){
+        for(int i=0; i<4; ++i){
+            r_shape[4*threadIdx.x + i] = p.r_shape[i];
+            phi_shape[4*threadIdx.x + i] = p.phi_shape[i];
+            z_shape[4*threadIdx.x + i] = p.z_shape[i];
+        }
+
+        symm_exploited[threadIdx.x] = p.symmetry_exploited;
+    }
+    __syncthreads();
+
+    // all threads need to participate in the interpolation
+    // int ii = threadIdx.x / 112;
+    int jj = (threadIdx.x % 112) / 28;
+    int kk = (threadIdx.x % 28) / 7;
+    int zz = threadIdx.x % 7 ;
+    int ni = srange[2];
+    int nj = trange[2];
+    int nk = zrange[2];
+    // printf("threadIdx.x=%d, jj=%d, kk=%d, zz=%d\n", threadIdx.x, jj, kk, zz);
+    // cooperate on each particle iteratively
+    for(int p=0; p<THREADS_PER_BLOCK; ++p){
+        if(is_particle[p]){
+            // printf("threadIdx.x=%d, interpolating particle %d, index_i = %d, index_j=%d, index_k=%d\n", threadIdx.x, p, index_i[p], index_j[p], index_k[p]);
+            // reset accumulator
+            workspace[threadIdx.x] = 0.0;
+
+            // load inner product to sum
+            for(int ii=0; ii<4; ++ii){
+                double shape_val = r_shape[4*p + ii] * phi_shape[4*p + jj] * z_shape[4*p + kk];
+                int row_idx = (index_i[p]+ii)*nj*nk + (index_j[p]+jj)*nk + (index_k[p]+kk); 
+                workspace[threadIdx.x] += shape_val * quad_pts[n*row_idx + zz]; // coalesced read, write
+            }
+            __syncthreads();
+
+            // atomicAdd(&workspace + zz, workspace[threadIdx.x]);
+            // __syncthreads();
+            // parallel sum reduction
+            for(int i=THREADS_PER_BLOCK/2; i>=7; i>>=1){
+                if(threadIdx.x < i){
+                    workspace[threadIdx.x] += workspace[threadIdx.x + i];
+                }
+                __syncthreads();
+            }
+            __syncthreads();
+
+            // write result to output array
+            if(threadIdx.x == 0){
+                double* out_arr = out+n*(blockIdx.x*blockDim.x +p);
+                for(int i=0; i<7; ++i){
+                    out_arr[i] = workspace[i];
+                }
+            }
+            // __syncthreads();
+        }
+    }
+
+    __syncthreads();
+    if(idx < n_points){
+        double* out_arr = out+n*idx;
+        if(symm_exploited[threadIdx.x]){
             out_arr[0] *= -1.0;
             out_arr[4] *= -1.0;
             out_arr[5] *= -1.0;
-
         }
-
-
-
     }
 }
 
@@ -711,7 +783,7 @@ extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_p
 
 
 
-    int nthreads = 384;
+    int nthreads = THREADS_PER_BLOCK;
     int nblks = n_points / nthreads + 1;
 
     cudaEvent_t start, stop;
