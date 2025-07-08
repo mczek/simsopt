@@ -23,13 +23,15 @@ def test_derivs(field, sc_praticle, nfp, n_metagrid_pts, n_test_pts, verify=True
 
         # generate test points
         r = np.random.uniform(low=r_range[0]+0.1, high=r_range[1]-0.1, size=(n_test_pts,1))
-        phi = np.random.uniform(low=phi_range[0], high=phi_range[1], size=(n_test_pts,1))
-        z = np.random.uniform(low=z_range[0]+0.1, high=z_range[1]-0.1, size=(n_test_pts,1))
+        phi = np.random.uniform(low=0, high=2*np.pi, size=(n_test_pts,1))
+        z = np.random.uniform(low=-z_range[1]+0.1, high=z_range[1]-0.1, size=(n_test_pts,1))
         rphiz = np.hstack((r,phi,z))
+        # rphiz = np.array([[1.64982937,  4.57359021, -0.05896898]])
         rphiz = np.ascontiguousarray(rphiz)
 
         VELOCITY = np.sqrt(2 * ENERGY / MASS)
         vpar_init = np.random.uniform(-VELOCITY, VELOCITY, (n_test_pts,))
+        # vpar_init = np.array([4355542.313737903])
 
       
 
@@ -48,12 +50,14 @@ def test_derivs(field, sc_praticle, nfp, n_metagrid_pts, n_test_pts, verify=True
                 for i in range(n_test_pts):
                         old_derivs[i,:] = sopp.simsopt_derivs(field, rphiz[i,:], MASS, CHARGE, VELOCITY, vpar_init[i])
 
-
+                dist_fn = sc_particle.evaluate_rphiz(rphiz)[:, 0]
+                print(dist_fn)
                 rel_err = np.abs((old_derivs - new_derivs) / old_derivs)
+                rel_err = rel_err[dist_fn > 0, :] # only consider particles inside the device
                 diff = np.max(rel_err)
                 print(np.abs(old_derivs - new_derivs) / old_derivs)
 
-                print("Maximum relative error in derivative values on {} points: {}".format(n_test_pts, diff))
+                print("Maximum relative error in derivative values on {} points: {}".format(rel_err.shape[0], diff))
 
                 print("culprit particle:")
                 row_index = np.argmax(rel_err) // rel_err.shape[1]
@@ -203,7 +207,7 @@ if __name__ == "__main__":
         np.random.seed(1800)
         # test_interpolant_bfield(bsh, sc_particle, nfp, n_metagrid_pts, 100000)
 
-        # test_derivs(bsh, sc_particle, nfp, n_metagrid_pts, 100000)
+        test_derivs(bsh, sc_particle, nfp, n_metagrid_pts, 100000)
 
         test_timestep(bsh, sc_particle, nfp, n_metagrid_pts, 100000)
 

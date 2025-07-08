@@ -16,11 +16,8 @@ namespace py = pybind11;
 #include "boozermagneticfield.h"
 #include "regular_grid_interpolant_3d.h"
 
-// #define CHECK_CUDA_ERROR(err) \
-//     if (err != cudaSuccess) { \
-//         fprintf(stderr, "CUDA Error: %s at %s:%d\n", cudaGetErrorString(err), __FILE__, __LINE__); \
-//         exit(EXIT_FAILURE); \
-//     }
+#define THREADS_PER_BLOCK 32
+#define PARTICLES_PER_BLOCK 8
 
 #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
@@ -100,36 +97,26 @@ __host__ __device__ void shape(double x, double* shape){
 
 __host__  __device__ __forceinline__ void interpolate(particle_t& p, const double* __restrict__ data, double* out, const double* __restrict__ rrange_arr, const double* __restrict__ phirange_arr, const double* __restrict__ zrange_arr, int n){
 
+    int nr = (rrange_arr[2]-1) / 3;
+    int nphi = (phirange_arr[2]-1) / 3;
+    int nz = (zrange_arr[2]-1)/3;
 
-    int nr = rrange_arr[2];
-    int nphi = phirange_arr[2];
-    int nz = zrange_arr[2];
 
-    // Need to interpolate modB, modB derivs, G, and iota
-
-    /*
-    From here it remains to perform the necessary interpolations
-    As opposed to Cartesian coordinates, we don't need to monitor the surface dist via interpolation
-    We also don't need to calculate the derivative of any of the interpolations
-    This lets us interpolate everything in one set of nested loops 
-    */
+    int cell_start = 64*(p.i*nphi*nz + p.j*nz + p.k);
+    // printf("r, phi, z cell ids = %d, %d, %d, nr, nphi, nz = %d, %d, %d, cell_start = %d\n", p.i, p.j, p.k, nr, nphi, nz, cell_start);
 
     for(int ii=0; ii<=3; ++ii){ // s grid
-        if((p.i+ii) < nr){
-            for(int jj=0; jj<=3; ++jj){ // theta grid           
-                int wrap_j = (p.j+jj) % nphi;
-                for(int kk=0; kk<=3; ++kk){ // zeta grid
-                    int wrap_k = (p.k+kk) % nz;
-                    int row_idx = (p.i+ii)*nphi*nz + wrap_j*nz + wrap_k;  
-                    // printf("row_index=%d\n", row_idx);               
-                    // printf("ii=%d, jj=%d, kk=%d, n=%d\n", ii, jj, kk, n);
-                    double shape_val = p.r_shape[ii]*p.phi_shape[jj]*p.z_shape[kk];
-                    // printf("shape_val = %.15e\n", shape_val);
-                    for(int zz=0; zz<n; ++zz){
-                        // printf("index access: %d\n", n*row_idx + zz);
-                        out[zz] += data[n*row_idx + zz]*shape_val;
-                        // printf("wrote to interpolant element %d\n", zz);
-                    }
+        for(int jj=0; jj<=3; ++jj){ // theta grid           
+            for(int kk=0; kk<=3; ++kk){ // zeta grid
+                int row_idx = cell_start + 16*ii + 4*jj + kk;
+                // printf("row_index=%d\n", row_idx);               
+                // printf("ii=%d, jj=%d, kk=%d, n=%d\n", ii, jj, kk, n);
+                double shape_val = p.r_shape[ii]*p.phi_shape[jj]*p.z_shape[kk];
+                // printf("shape_val = %.15e\n", shape_val);
+                for(int zz=0; zz<n; ++zz){
+                    // printf("index access: %d\n", n*row_idx + zz);
+                    out[zz] += data[n*row_idx + zz]*shape_val;
+                    // printf("wrote to interpolant element %d\n", zz);
                 }
             }
         }
@@ -160,7 +147,7 @@ __host__  __device__ void calc_derivs(particle_t& p, double* out, double* rrange
 
     interpolate(p, quadpts_arr, interpolants, rrange_arr, phirange_arr, zrange_arr, 7);
 
-    // printf("interpolants:  %.15e, %.15e, %.15e, %.15e, %.15e, %.15e\n", interpolants[0], interpolants[1], interpolants[2], interpolants[3], interpolants[4], interpolants[5]);
+	//printf("interpolants:  %.15e, %.15e, %.15e, %.15e, %.15e, %.15e\n", interpolants[0], interpolants[1], interpolants[2], interpolants[3], interpolants[4], interpolants[5]);
     
 
 
@@ -191,6 +178,7 @@ __host__  __device__ void calc_derivs(particle_t& p, double* out, double* rrange
     interpolants[3] = cos(phi) * GradAbsB_r - sin(phi) * GradAbsB_phi;
     interpolants[4] = sin(phi) * GradAbsB_r + cos(phi) * GradAbsB_phi;
 
+	//printf("B:  %.15e, %.15e, %.15e, GradAbsB: %.15e, %.15e, %.15e\n", interpolants[0], interpolants[1], interpolants[2], interpolants[3], interpolants[4], interpolants[5]);
     // interpolants now stores B, GradAbsB, signed dist fn
     // abs B = || B ||
     double AbsB = interpolants[0]*interpolants[0] + interpolants[1]*interpolants[1] + interpolants[2]*interpolants[2];
@@ -318,7 +306,7 @@ __host__ __device__ void build_state(particle_t& p, int deriv_id, double* rrange
     p.interpolation_loc[1] = phi;
     p.interpolation_loc[2] = z;
 
-    //printf("deriv pt: r=%.15e, phi=%.15e, z=%.15e\n", r, phi, z);
+    // printf("deriv pt: r=%.15e, phi=%.15e, z=%.15e\n", r, phi, z);
 
     /*
     * index into the grid and calculate weights
@@ -339,6 +327,8 @@ __host__ __device__ void build_state(particle_t& p, int deriv_id, double* rrange
 
     p.i = max(p.i, 0); // if r too small to be in the device, extrapolate
 
+
+
     // printf("x=%.15e, y=%.15e, z=%.15e, deriv pt: r=%.15e, phi=%.15e, z=%.15e interpolant indices: i=%d, j=%d, k=%d\n", p.x_temp[0], p.x_temp[1], p.x_temp[2], r, phi, z, p.i, p.j, p.k);
 
     // normalized positions in local grid wrt e.g. r at index i
@@ -350,6 +340,11 @@ __host__ __device__ void build_state(particle_t& p, int deriv_id, double* rrange
     shape(r_rel, p.r_shape);
     shape(phi_rel, p.phi_shape);
     shape(z_rel, p.z_shape);
+
+    // convert to cell id
+    p.i /= 3;
+    p.j /= 3;
+    p.k /= 3;
 
 }
 
@@ -520,16 +515,16 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
 
    
     particle_t* particles_d;
-    cudaMalloc((void**)&particles_d, nparticles * sizeof(particle_t));
-    cudaMemcpy(particles_d, particles, nparticles * sizeof(particle_t), cudaMemcpyHostToDevice);
+    gpuErrchk(cudaMalloc((void**)&particles_d, nparticles * sizeof(particle_t)) );
+    gpuErrchk(cudaMemcpy(particles_d, particles, nparticles * sizeof(particle_t), cudaMemcpyHostToDevice) );
 
     double* srange_d;
-    cudaMalloc((void**)&srange_d, 3 * sizeof(double));
-    cudaMemcpy(srange_d, srange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
+    gpuErrchk(cudaMalloc((void**)&srange_d, 3 * sizeof(double)) );
+    gpuErrchk(cudaMemcpy(srange_d, srange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice) );
 
     double* zrange_d;
-    cudaMalloc((void**)&zrange_d, 3 * sizeof(double));
-    cudaMemcpy(zrange_d, zrange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
+    gpuErrchk(cudaMalloc((void**)&zrange_d, 3 * sizeof(double)) );
+    gpuErrchk(cudaMemcpy(zrange_d, zrange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice) );
 
     double* trange_d;
     cudaMalloc((void**)&trange_d, 3 * sizeof(double));
@@ -537,8 +532,8 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
 
 
     double* quadpts_d;
-    cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(double));
-    cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(double), cudaMemcpyHostToDevice);
+    gpuErrchk(cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(double)) ); 
+    gpuErrchk(cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(double), cudaMemcpyHostToDevice) );
 
     int nthreads = 256;
     int nblks = nparticles / nthreads + 1;
@@ -551,7 +546,7 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
     cudaEventRecord(start);
     particle_trace_kernel<<<nblks, nthreads>>>(particles_d, srange_d, trange_d, zrange_d, quadpts_d, tmax, m, q, nparticles);
 
-    cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost);
+    gpuErrchk(cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost) );
 
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
@@ -719,14 +714,16 @@ extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_p
     cudaEventCreate(&stop);
     cudaEventRecord(start);
     test_gpu_interpolation_kernel<<<nblks, nthreads>>>(quadpts_d, srange_d, trange_d, zrange_d, loc_d, out_d, n, n_points);
+    
+    double out[n*n_points];
+    gpuErrchk( cudaMemcpy(&out, out_d, n*n_points * sizeof(double), cudaMemcpyDeviceToHost) );
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
     float milliseconds = 0;
     cudaEventElapsedTime(&milliseconds, start, stop);
     std::cout << "interpolation kernel time (ms): " << milliseconds<< "\n";
     
-    double out[n*n_points];
-    cudaMemcpy(&out, out_d, n*n_points * sizeof(double), cudaMemcpyDeviceToHost);
+
     auto result = py::array_t<double>(n*n_points, out);
     return result;
 
@@ -827,7 +824,7 @@ extern "C" py::array_t<double> test_derivatives(py::array_t<double> quad_pts, py
     std::cout << "interpolation kernel time (ms): " << milliseconds<< "\n";
     
     double out[4*n_points];
-    cudaMemcpy(&out, out_d, 4*n_points * sizeof(double), cudaMemcpyDeviceToHost);
+    gpuErrchk( cudaMemcpy(&out, out_d, 4*n_points * sizeof(double), cudaMemcpyDeviceToHost) );
     auto result = py::array_t<double>(4*n_points, out);
     return result;
 }
@@ -922,7 +919,7 @@ extern "C" vector<double> test_timestep(py::array_t<double> quad_pts, py::array_
 
     double* quadpts_d;
 
-    std::cout << "quadpts.size() = " << quad_pts.size() << "\n";
+    // std::cout << "quadpts.size() = " << quad_pts.size() << "\n";
     gpuErrchk( cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(double)) );
     gpuErrchk( cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(double), cudaMemcpyHostToDevice) );
 
