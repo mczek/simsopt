@@ -16,7 +16,7 @@ namespace py = pybind11;
 #include "boozermagneticfield.h"
 #include "regular_grid_interpolant_3d.h"
 
-#define THREADS_PER_BLOCK 32
+#define PARTICLES_PER_BLOCK 32
 
 #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
@@ -83,10 +83,29 @@ extern "C" void addKernelWrapper(int *c, const int *a, const int *b, int size){
 
 
 
-
+__host__ __device__ void shape(double& x, double& output, int i) {
+    switch (i) {
+        case 0:
+            output = (1.0 - x) * (2.0 - x) * (3.0 - x) / 6.0;
+            break;
+        case 1:
+            output = x * (2.0 - x) * (3.0 - x) / 2.0;
+            break;
+        case 2:
+            output = x * (x - 1.0) * (3.0 - x) / 2.0;
+            break;
+        case 3:
+            output = x * (x - 1.0) * (x - 2.0) / 6.0;
+            break;
+        default:
+            output = 0.0;
+            break;
+    }
+}
 
 
 __host__ __device__ void shape(double x, double* shape){
+
     shape[0] = (1.0-x)*(2.0-x)*(3.0-x)/6.0;
     shape[1] = x*(2.0-x)*(3.0-x)/2.0;
     shape[2] = x*(x-1.0)*(3.0-x)/2.0;
@@ -111,13 +130,16 @@ __device__ void interpolate(double*  out, const double* __restrict__ data, const
                 // printf("particle %d: row_index=%d\n", threadIdx.x, row_idx);               
                 // printf("ii=%d, jj=%d, kk=%d, n=%d\n", ii, jj, kk, n);
                 // printf("particle %d: accessing shape arrays at indices %d %d %d\n", 4*threadIdx.x + ii, 4*threadIdx.x + jj, 4*threadIdx.x+kk);
-                double shape_val = r_shape[4*threadIdx.x + ii]*phi_shape[4*threadIdx.x + jj]*z_shape[4*threadIdx.x + kk];
+                double shape_val = r_shape[ii*PARTICLES_PER_BLOCK +threadIdx.x]*phi_shape[jj*PARTICLES_PER_BLOCK +threadIdx.x]*z_shape[kk*PARTICLES_PER_BLOCK +threadIdx.x];
                 // printf("shape_val = %.15e\n", shape_val);
                 for(int zz=0; zz<n; ++zz){
                     // printf("index access: %d\n", n*row_idx + zz);
-                    // printf("particle %d: accessing out at index %d\n", threadIdx.x, THREADS_PER_BLOCK*zz + threadIdx.x);
+                    // printf("particle %d: accessing out at index %d\n", threadIdx.x, PARTICLES_PER_BLOCK*zz + threadIdx.x);
                     // printf("particle %d: accessing data at index %d\n", threadIdx.x, n*row_idx +zz);
-                    out[THREADS_PER_BLOCK*zz + threadIdx.x] += data[n*row_idx + zz]*shape_val;
+                    // if(threadIdx.x==1){
+                    //     printf("particle %d: accessing data at index %d, value = %.15e, shape_val=%.15e\n", threadIdx.x, n*row_idx + zz, data[n*row_idx + zz], shape_val);
+                    // }
+                    out[PARTICLES_PER_BLOCK*zz + threadIdx.x] += data[n*row_idx + zz]*shape_val;
                     // printf("wrote to interpolant element %d\n", zz);
                 }
             }
@@ -125,37 +147,7 @@ __device__ void interpolate(double*  out, const double* __restrict__ data, const
 
     }
 }
-// __host__  __device__ __forceinline__ void interpolate(particle_t& p, const double* __restrict__ data, double* out, const double* __restrict__ rrange_arr, const double* __restrict__ phirange_arr, const double* __restrict__ zrange_arr, int n){
 
-//     int nr = (rrange_arr[2]-1) / 3;
-//     int nphi = (phirange_arr[2]-1) / 3;
-//     int nz = (zrange_arr[2]-1)/3;
-
-
-//     int cell_start = 64*(p.i*nphi*nz + p.j*nz + p.k);
-//     // printf("r, phi, z cell ids = %d, %d, %d, nr, nphi, nz = %d, %d, %d, cell_start = %d\n", p.i, p.j, p.k, nr, nphi, nz, cell_start);
-
-//     for(int ii=0; ii<=3; ++ii){ // s grid
-//         for(int jj=0; jj<=3; ++jj){ // theta grid           
-//             for(int kk=0; kk<=3; ++kk){ // zeta grid
-//                 int row_idx = cell_start + 16*ii + 4*jj + kk;
-//                 // printf("row_index=%d\n", row_idx);               
-//                 // printf("ii=%d, jj=%d, kk=%d, n=%d\n", ii, jj, kk, n);
-//                 double shape_val = p.r_shape[ii]*p.phi_shape[jj]*p.z_shape[kk];
-//                 // printf("shape_val = %.15e\n", shape_val);
-//                 for(int zz=0; zz<n; ++zz){
-//                     // printf("index access: %d\n", n*row_idx + zz);
-//                     out[zz] += data[n*row_idx + zz]*shape_val;
-//                     // printf("wrote to interpolant element %d\n", zz);
-//                 }
-//             }
-//         }
-
-//     }
-
-//     // printf("return from interpolant\n");
-
-// }
 
 // out contains derivatives for x , y, z, v_par, and then norm of B and surface distance interpolation
 __device__ void calc_derivs(particle_t& p, double* out, double* rrange_arr, double* phirange_arr, double* zrange_arr, double* quadpts_arr, double m, double q, double mu){
@@ -170,17 +162,17 @@ __device__ void calc_derivs(particle_t& p, double* out, double* rrange_arr, doub
     
 
     */
-    __shared__ int index_i[THREADS_PER_BLOCK];
-    __shared__ int index_j[THREADS_PER_BLOCK];
-    __shared__ int index_k[THREADS_PER_BLOCK];
+    __shared__ int index_i[PARTICLES_PER_BLOCK];
+    __shared__ int index_j[PARTICLES_PER_BLOCK];
+    __shared__ int index_k[PARTICLES_PER_BLOCK];
 
     index_i[threadIdx.x] = p.i;
     index_j[threadIdx.x] = p.j;
     index_k[threadIdx.x] = p.k;
 
-    __shared__ double r_shape[4*THREADS_PER_BLOCK];
-    __shared__ double phi_shape[4*THREADS_PER_BLOCK];
-    __shared__ double z_shape[4*THREADS_PER_BLOCK];
+    __shared__ double r_shape[4*PARTICLES_PER_BLOCK];
+    __shared__ double phi_shape[4*PARTICLES_PER_BLOCK];
+    __shared__ double z_shape[4*PARTICLES_PER_BLOCK];
 
     for(int i=0; i<4; ++i){
         r_shape[4*threadIdx.x + i] = p.r_shape[i];
@@ -188,9 +180,9 @@ __device__ void calc_derivs(particle_t& p, double* out, double* rrange_arr, doub
         z_shape[4*threadIdx.x + i] = p.z_shape[i];
     }
 
-    __shared__ double block_interpolants[7*THREADS_PER_BLOCK];
+    __shared__ double block_interpolants[7*PARTICLES_PER_BLOCK];
     for(int i=0; i<7; ++i){
-        block_interpolants[i*THREADS_PER_BLOCK + threadIdx.x] = 0.0;
+        block_interpolants[i*PARTICLES_PER_BLOCK + threadIdx.x] = 0.0;
     }
     __syncthreads();
     int nphi = (phirange_arr[2]-1)/3;
@@ -207,7 +199,7 @@ __device__ void calc_derivs(particle_t& p, double* out, double* rrange_arr, doub
 
     double interpolants[7];
     for(int i=0; i<7; ++i){
-        interpolants[i] = block_interpolants[i*THREADS_PER_BLOCK + threadIdx.x];
+        interpolants[i] = block_interpolants[i*PARTICLES_PER_BLOCK + threadIdx.x];
     }
 
     double x = p.x_temp[0];
@@ -273,7 +265,146 @@ __device__ void calc_derivs(particle_t& p, double* out, double* rrange_arr, doub
 
 }
 
+__device__ void build_state(double* x_temp, int deriv_id, bool* symmetry_exploited, int* index_i, int* index_j, int* index_k,
+                            double* r_shape, double* phi_shape, double* z_shape, double* state, double* derivs, double* dt,
+                            double* rrange_arr, double* phirange_arr, double* zrange_arr){
+    const double b1 = 35.0 / 384.0, b3 = 500.0 / 1113.0, b4 = 125.0 / 192.0, b5 = -2187.0 / 6784.0, b6 = 11.0 / 84.0;
+    double wgts[6] = {0.0}; 
+    for (int i = 0; i < 4; i++) {
+        x_temp[i*PARTICLES_PER_BLOCK + threadIdx.x] = state[i*PARTICLES_PER_BLOCK + threadIdx.x];
+    }
+    
+    switch(deriv_id){
+        case 0:
+            // wgts = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+            break;
+        case 1:
+            // wgts = {1.0/5.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+            wgts[0] = 1.0/5.0;
+            break;
+        case 2:
+            // wgts = {3.0 / 40.0, 9.0 / 40.0, 0.0, 0.0, 0.0, 0.0};
+            wgts[0] = 3.0 / 40.0;
+            wgts[1] = 9.0 / 40.0;
+            break;
+        case 3:
+            // wgts = {44.0 / 45.0, -56.0 / 15.0, 32.0 / 9.0, 0.0, 0.0, 0.0, 0.0};
+            wgts[0] = 44.0 / 45.0;
+            wgts[1] = -56.0 / 15.0;
+            wgts[2] = 32.0 / 9.0;
+            break;
+        case 4:
+            // wgts = {19372.0 / 6561.0, -25360.0 / 2187.0, 64448.0 / 6561.0, -212.0 / 729.0, 0.0, 0.0, 0.0};
+            wgts[0] = 19372.0 / 6561.0;
+            wgts[1] = -25360.0 / 2187.0;
+            wgts[2] = 64448.0 / 6561.0;
+            wgts[3] = -212.0 / 729.0;
+            break;
+        case 5:
+            // wgts = {9017.0 / 3168.0, -355.0 / 33.0, 46732.0 / 5247.0, 49.0 / 176.0,-5103.0 / 18656.0, 0.0, 0.0};
+            wgts[0] = 9017.0 / 3168.0;
+            wgts[1] = -355.0 / 33.0;
+            wgts[2] = 46732.0 / 5247.0;
+            wgts[3] = 49.0 / 176.0;
+            wgts[4] = -5103.0 / 18656.0;
+            break;
+        case 6:
+            // wgts = {35.0 / 384.0, 0.0, 500.0 / 1113.0, 125.0 / 192.0, -2187.0 / 6784.0, 11.0 / 84.0, 0.0};
+            wgts[0] = 35.0 / 384.0;
+            wgts[2] = 500.0 / 1113.0;
+            wgts[3] = 125.0 / 192.0; 
+            wgts[4] = -2187.0 / 6784.0;
+            wgts[5] = 11.0 / 84.0;
+            break;
+        default:
+            break;
+    }
 
+    for (int j=0; j<6; ++j){
+        for(int i=0; i<4; ++i){
+            // printf("contribution: %.15e, %.15e, %.15e, %.15e, %.15e, %.15e, %.15e\n", p.dt, wgts[j], p.derivs[6*j+i], p.dt * wgts[j], wgts[j] * p.derivs[6*j+i], p.dt * p.derivs[6*j+i], p.dt * wgts[j] * p.derivs[6*j+i]);
+            x_temp[i*PARTICLES_PER_BLOCK + threadIdx.x] += dt[threadIdx.x] * wgts[j] * derivs[(6*j+i)*PARTICLES_PER_BLOCK + threadIdx.x];
+            printf("contribution: %.15e, %.15e, %.15e, %.15e, %.15e, %.15e, %.15e\n", dt[threadIdx.x], wgts[j], derivs[(6*j+i)*PARTICLES_PER_BLOCK + threadIdx.x], dt[threadIdx.x] * wgts[j], wgts[j] * derivs[(6*j+i)*PARTICLES_PER_BLOCK + threadIdx.x], dt[threadIdx.x] * derivs[(6*j+i)*PARTICLES_PER_BLOCK + threadIdx.x], dt[threadIdx.x] * wgts[j] * derivs[(6*j+i)*PARTICLES_PER_BLOCK + threadIdx.x]);
+        }
+    } 
+
+    double x = x_temp[0*PARTICLES_PER_BLOCK + threadIdx.x];
+    double y = x_temp[1*PARTICLES_PER_BLOCK + threadIdx.x];
+    double z = x_temp[2*PARTICLES_PER_BLOCK + threadIdx.x];
+    double v_par = x_temp[3*PARTICLES_PER_BLOCK + threadIdx.x];
+
+
+    // convert to cylindrical coordinates for interpolation
+    double r = sqrt(x*x + y*y);
+    double phi = atan2(y, x);
+    
+
+    // printf("deriv pt: %.15e, %.15e, %.15e, %.15e, %.15e\n", p.dt, r, phi, z, p.x_temp[3]);
+
+    // restrict phi to [0, 2pi / nfp]
+    double period = phirange_arr[1];
+    phi = fmod(phi, period);
+    phi += period*(phi < 0);
+
+    // exploit stellarator symmetry
+    symmetry_exploited[threadIdx.x] = z < 0;
+    if(symmetry_exploited[threadIdx.x]){
+        z = -z;
+        phi = 2*M_PI - phi;
+        phi = fmod(phi, period);
+        phi += period*(phi < 0);
+    }
+
+    // note: remove this memory usage
+    // p.interpolation_loc[0] = r;
+    // p.interpolation_loc[1] = phi;
+    // p.interpolation_loc[2] = z;
+
+    // printf("deriv pt: r=%.15e, phi=%.15e, z=%.15e\n", r, phi, z);
+
+    /*
+    * index into the grid and calculate weights
+    */ 
+    double r_grid_size = (rrange_arr[1]-rrange_arr[0]) / (rrange_arr[2]-1);
+    double phi_grid_size = (phirange_arr[1]-phirange_arr[0]) / (phirange_arr[2]-1);
+    double z_grid_size = (zrange_arr[1]-zrange_arr[0]) / (zrange_arr[2]-1);
+
+    // printf("grid sizes: r=%.15e, phi=%.15e, zeta=%.15e\n", r_grid_size, phi_grid_size, z_grid_size);
+
+    int i = 3*((int) ((r - rrange_arr[0]) / r_grid_size) / 3);
+    int j = 3*((int) ((phi - phirange_arr[0]) / phi_grid_size) / 3);
+    int k = 3*((int) ((z - zrange_arr[0]) / z_grid_size) / 3);
+
+    i = min(i, (int)rrange_arr[2]-4);
+    j = min(j, (int)phirange_arr[2]-4);
+    k = min(k, (int)zrange_arr[2]-4);
+
+    i = max(i, 0); // if r too small to be in the device, extrapolate
+
+
+
+    // printf("x=%.15e, y=%.15e, z=%.15e, deriv pt: r=%.15e, phi=%.15e, z=%.15e interpolant indices: i=%d, j=%d, k=%d\n", p.x_temp[0], p.x_temp[1], p.x_temp[2], r, phi, z, p.i, p.j, p.k);
+
+    // normalized positions in local grid wrt e.g. r at index i
+    // maps the position to [0,3] in the "meta grid"
+    double r_rel = (r -  i*r_grid_size - rrange_arr[0]) / r_grid_size;
+    double phi_rel = (phi -  j*phi_grid_size - phirange_arr[0]) / phi_grid_size;
+    double z_rel = (z - k*z_grid_size - zrange_arr[0]) / z_grid_size;
+   
+    for(int i=0; i<4; ++i){
+        shape(r_rel, r_shape[i*PARTICLES_PER_BLOCK + threadIdx.x], i);
+        shape(phi_rel, phi_shape[i*PARTICLES_PER_BLOCK + threadIdx.x], i);
+        shape(z_rel, z_shape[i*PARTICLES_PER_BLOCK + threadIdx.x], i);
+    }
+
+    // convert to cell id
+    index_i[threadIdx.x] = i/3;
+    index_j[threadIdx.x] = j/3;
+    index_k[threadIdx.x] = k/3;
+    
+
+
+}
 
 __device__ void build_state(particle_t& p, int deriv_id, double* rrange_arr, double* phirange_arr, double* zrange_arr){
    
@@ -362,9 +493,9 @@ __device__ void build_state(particle_t& p, int deriv_id, double* rrange_arr, dou
     }
 
     // note: remove this memory usage
-    p.interpolation_loc[0] = r;
-    p.interpolation_loc[1] = phi;
-    p.interpolation_loc[2] = z;
+    // p.interpolation_loc[0] = r;
+    // p.interpolation_loc[1] = phi;
+    // p.interpolation_loc[2] = z;
 
     // printf("deriv pt: r=%.15e, phi=%.15e, z=%.15e\n", r, phi, z);
 
@@ -595,7 +726,7 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
     gpuErrchk(cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(double)) ); 
     gpuErrchk(cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(double), cudaMemcpyHostToDevice) );
 
-    int nthreads = THREADS_PER_BLOCK;
+    int nthreads = PARTICLES_PER_BLOCK;
     int nblks = nparticles / nthreads + 1;
     std::cout << "starting particle tracing kernel\n";
 
@@ -697,6 +828,9 @@ __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* srange, 
         double y = loc_arr[0]*sin(loc_arr[1]);
         double z = loc_arr[2];
 
+
+
+
         p.state[0] = x;
         p.state[1] = y;
         p.state[2] = z;
@@ -704,31 +838,60 @@ __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* srange, 
         p.dt = 1e-3; //needed for build_state
 
         // printf("x=%.15e, y=%.15e, z=%.15e\n", p.state[0], p.state[1], p.state[2]);
-        build_state(p, 0, srange, trange, zrange);
-        __syncthreads();
-        // printf("build_state complete on particle %d\n", idx);
-
-        __shared__ int index_i[THREADS_PER_BLOCK];
-        __shared__ int index_j[THREADS_PER_BLOCK];
-        __shared__ int index_k[THREADS_PER_BLOCK];
-
-        index_i[threadIdx.x] = p.i;
-        index_j[threadIdx.x] = p.j;
-        index_k[threadIdx.x] = p.k;
-
-        __shared__ double r_shape[4*THREADS_PER_BLOCK];
-        __shared__ double phi_shape[4*THREADS_PER_BLOCK];
-        __shared__ double z_shape[4*THREADS_PER_BLOCK];
-
+        __shared__ double x_temp[4 * PARTICLES_PER_BLOCK];
+        __shared__ bool symmetry_exploited[PARTICLES_PER_BLOCK];
+        __shared__ int index_i[PARTICLES_PER_BLOCK];
+        __shared__ int index_j[PARTICLES_PER_BLOCK];
+        __shared__ int index_k[PARTICLES_PER_BLOCK];
+        __shared__ double r_shape[4 * PARTICLES_PER_BLOCK];
+        __shared__ double phi_shape[4 * PARTICLES_PER_BLOCK];
+        __shared__ double z_shape[4 * PARTICLES_PER_BLOCK];
+        __shared__ double state[4 * PARTICLES_PER_BLOCK];
+        __shared__ double derivs[42 * PARTICLES_PER_BLOCK];
+        __shared__ double dt[PARTICLES_PER_BLOCK];
+        dt[threadIdx.x] = 1e-3; // needed for build_state
+        symmetry_exploited[threadIdx.x] = false;
         for(int i=0; i<4; ++i){
-            r_shape[4*threadIdx.x + i] = p.r_shape[i];
-            phi_shape[4*threadIdx.x + i] = p.phi_shape[i];
-            z_shape[4*threadIdx.x + i] = p.z_shape[i];
+            state[i*PARTICLES_PER_BLOCK + threadIdx.x] = p.state[i];
+        }
+        build_state(x_temp, 0, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, state, derivs, dt, srange, trange, zrange);
+        __syncthreads();
+
+        if(threadIdx.x == 1){
+            // printf("build_state complete on particle %d\n", idx);
+            printf("x_temp: %.15e, %.15e, %.15e, %.15e\n", x_temp[0*PARTICLES_PER_BLOCK + threadIdx.x], x_temp[1*PARTICLES_PER_BLOCK + threadIdx.x], x_temp[2*PARTICLES_PER_BLOCK + threadIdx.x], x_temp[3*PARTICLES_PER_BLOCK + threadIdx.x]);
+            printf("symmetry_exploited: %d\n", symmetry_exploited[threadIdx.x]);
+            printf("index_i: %d, index_j: %d, index_k: %d\n", index_i[threadIdx.x], index_j[threadIdx.x], index_k[threadIdx.x]);
+            printf("r_shape: %.15e, %.15e, %.15e, %.15e\n", r_shape[0*PARTICLES_PER_BLOCK + threadIdx.x], r_shape[1*PARTICLES_PER_BLOCK + threadIdx.x], r_shape[2*PARTICLES_PER_BLOCK + threadIdx.x], r_shape[3*PARTICLES_PER_BLOCK + threadIdx.x]);
+            printf("phi_shape: %.15e, %.15e, %.15e, %.15e\n", phi_shape[0*PARTICLES_PER_BLOCK + threadIdx.x], phi_shape[1*PARTICLES_PER_BLOCK + threadIdx.x], phi_shape[2*PARTICLES_PER_BLOCK + threadIdx.x], phi_shape[3*PARTICLES_PER_BLOCK + threadIdx.x]);
+            printf("z_shape: %.15e, %.15e, %.15e, %.15e\n", z_shape[0*PARTICLES_PER_BLOCK + threadIdx.x], z_shape[1*PARTICLES_PER_BLOCK + threadIdx.x], z_shape[2*PARTICLES_PER_BLOCK + threadIdx.x], z_shape[3*PARTICLES_PER_BLOCK + threadIdx.x]);
+
+
         }
 
-        __shared__ double block_interpolants[7*THREADS_PER_BLOCK];
+        // printf("build_state complete on particle %d\n", idx);
+
+        // __shared__ int index_i[PARTICLES_PER_BLOCK];
+        // __shared__ int index_j[PARTICLES_PER_BLOCK];
+        // __shared__ int index_k[PARTICLES_PER_BLOCK];
+
+        // index_i[threadIdx.x] = p.i;
+        // index_j[threadIdx.x] = p.j;
+        // index_k[threadIdx.x] = p.k;
+
+        // __shared__ double r_shape[4*PARTICLES_PER_BLOCK];
+        // __shared__ double phi_shape[4*PARTICLES_PER_BLOCK];
+        // __shared__ double z_shape[4*PARTICLES_PER_BLOCK];
+
+        // for(int i=0; i<4; ++i){
+        //     r_shape[4*threadIdx.x + i] = p.r_shape[i];
+        //     phi_shape[4*threadIdx.x + i] = p.phi_shape[i];
+        //     z_shape[4*threadIdx.x + i] = p.z_shape[i];
+        // }
+
+        __shared__ double block_interpolants[7*PARTICLES_PER_BLOCK];
         for(int i=0; i<7; ++i){
-            block_interpolants[i*THREADS_PER_BLOCK + threadIdx.x] = 0.0;
+            block_interpolants[i*PARTICLES_PER_BLOCK + threadIdx.x] = 0.0;
         }
         
         // printf("calling interpolate for particle %d\n", threadIdx.x);
@@ -739,10 +902,14 @@ __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* srange, 
         // interpolate(p, quad_pts, out_arr, srange, trange, zrange, n);
 
         for(int i=0; i<7; ++i){
-            out_arr[i] = block_interpolants[i*THREADS_PER_BLOCK + threadIdx.x];
+            out_arr[i] = block_interpolants[i*PARTICLES_PER_BLOCK + threadIdx.x];
+
+            if(threadIdx.x==1){
+                printf("interpolated value %d for particle %d: %.15e\n", i, idx, out_arr[i]);
+            }
         }
 
-        if(p.symmetry_exploited){
+        if(symmetry_exploited[threadIdx.x]){
             out_arr[0] *= -1.0;
             out_arr[4] *= -1.0;
             out_arr[5] *= -1.0;
@@ -799,7 +966,7 @@ extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_p
 
 
 
-    int nthreads = THREADS_PER_BLOCK;
+    int nthreads = PARTICLES_PER_BLOCK;
     int nblks = n_points / nthreads + 1;
 
     cudaEvent_t start, stop;
@@ -902,7 +1069,7 @@ extern "C" py::array_t<double> test_derivatives(py::array_t<double> quad_pts, py
 
 
 
-    int nthreads = THREADS_PER_BLOCK;
+    int nthreads = PARTICLES_PER_BLOCK;
     int nblks = n_points / nthreads + 1;
 
     cudaEvent_t start, stop;
@@ -1016,7 +1183,7 @@ extern "C" vector<double> test_timestep(py::array_t<double> quad_pts, py::array_
     gpuErrchk( cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(double)) );
     gpuErrchk( cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(double), cudaMemcpyHostToDevice) );
 
-    int nthreads = THREADS_PER_BLOCK;
+    int nthreads = PARTICLES_PER_BLOCK;
     int nblks = nparticles / nthreads + 1;
     std::cout << "starting particle tracing kernel\n";
 
