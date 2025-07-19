@@ -183,14 +183,14 @@ __device__ void calc_derivs(double* derivs, int deriv_id, double* quadpts_arr, d
     double GradAbsB_x = cos(phi) * GradAbsB_r - sin(phi) * GradAbsB_phi;
     double GradAbsB_y = sin(phi) * GradAbsB_r + cos(phi) * GradAbsB_phi;
 
-    printf("particle %d: B = %.15e, %.15e, %.15e, GradAbsB = %.15e, %.15e, %.15e\n", threadIdx.x, B_x, B_y, B_z, GradAbsB_x, GradAbsB_y, GradAbsB_z);
+    // printf("particle %d: B = %.15e, %.15e, %.15e, GradAbsB = %.15e, %.15e, %.15e\n", threadIdx.x, B_x, B_y, B_z, GradAbsB_x, GradAbsB_y, GradAbsB_z);
 
     double AbsB = sqrt(B_x*B_x + B_y*B_y + B_z*B_z);
     double v_perp2 = 2*mu[threadIdx.x]*AbsB;
     double fak1 = (v_par/AbsB);
     double fak2 = (m/(q*pow(AbsB, 3)))*(0.5*v_perp2 + v_par*v_par);
 
-    printf("particle %d: mu=%.15e, v_perp2 = %.15e, AbsB = %.15e, fak1 = %.15e, fak2 = %.15e\n", threadIdx.x, mu[threadIdx.x], v_perp2, AbsB, fak1, fak2);
+    // printf("particle %d: mu=%.15e, v_perp2 = %.15e, AbsB = %.15e, fak1 = %.15e, fak2 = %.15e\n", threadIdx.x, mu[threadIdx.x], v_perp2, AbsB, fak1, fak2);
 
     double BcrossGradAbsB_elt = B_y*GradAbsB_z - B_z*GradAbsB_y;
     derivs[(6*deriv_id + 0)*PARTICLES_PER_BLOCK + threadIdx.x] = fak1*B_x + fak2*BcrossGradAbsB_elt;
@@ -202,12 +202,12 @@ __device__ void calc_derivs(double* derivs, int deriv_id, double* quadpts_arr, d
     derivs[(6*deriv_id + 4)*PARTICLES_PER_BLOCK + threadIdx.x] = AbsB; // AbsB
     derivs[(6*deriv_id + 5)*PARTICLES_PER_BLOCK + threadIdx.x] = block_interpolants[6*PARTICLES_PER_BLOCK + threadIdx.x]; // boundary dist fn
 
-    printf("particle %d: derivative evaluated at %.15e, %.15e, %.15e, %.15e : %.15e, %.15e, %.15e, %.15e\n", 
-           threadIdx.x, x, y, z, v_par, 
-           derivs[(6*deriv_id + 0)*PARTICLES_PER_BLOCK + threadIdx.x], 
-           derivs[(6*deriv_id + 1)*PARTICLES_PER_BLOCK + threadIdx.x], 
-           derivs[(6*deriv_id + 2)*PARTICLES_PER_BLOCK + threadIdx.x], 
-           derivs[(6*deriv_id + 3)*PARTICLES_PER_BLOCK + threadIdx.x]);
+    // printf("particle %d: derivative evaluated at %.15e, %.15e, %.15e, %.15e : %.15e, %.15e, %.15e, %.15e\n", 
+        //    threadIdx.x, x, y, z, v_par, 
+        //    derivs[(6*deriv_id + 0)*PARTICLES_PER_BLOCK + threadIdx.x], 
+        //    derivs[(6*deriv_id + 1)*PARTICLES_PER_BLOCK + threadIdx.x], 
+        //    derivs[(6*deriv_id + 2)*PARTICLES_PER_BLOCK + threadIdx.x], 
+        //    derivs[(6*deriv_id + 3)*PARTICLES_PER_BLOCK + threadIdx.x]);
 
 
 }
@@ -386,7 +386,7 @@ __device__ void build_state(double* x_temp, int deriv_id, bool* symmetry_exploit
         for(int i=0; i<4; ++i){
             // printf("contribution: %.15e, %.15e, %.15e, %.15e, %.15e, %.15e, %.15e\n", p.dt, wgts[j], p.derivs[6*j+i], p.dt * wgts[j], wgts[j] * p.derivs[6*j+i], p.dt * p.derivs[6*j+i], p.dt * wgts[j] * p.derivs[6*j+i]);
             x_temp[i*PARTICLES_PER_BLOCK + threadIdx.x] += dt[threadIdx.x] * wgts[j] * derivs[(6*j+i)*PARTICLES_PER_BLOCK + threadIdx.x];
-            printf("contribution: %.15e, %.15e, %.15e, %.15e, %.15e, %.15e, %.15e\n", dt[threadIdx.x], wgts[j], derivs[(6*j+i)*PARTICLES_PER_BLOCK + threadIdx.x], dt[threadIdx.x] * wgts[j], wgts[j] * derivs[(6*j+i)*PARTICLES_PER_BLOCK + threadIdx.x], dt[threadIdx.x] * derivs[(6*j+i)*PARTICLES_PER_BLOCK + threadIdx.x], dt[threadIdx.x] * wgts[j] * derivs[(6*j+i)*PARTICLES_PER_BLOCK + threadIdx.x]);
+            // printf("contribution: %.15e, %.15e, %.15e, %.15e, %.15e, %.15e, %.15e\n", dt[threadIdx.x], wgts[j], derivs[(6*j+i)*PARTICLES_PER_BLOCK + threadIdx.x], dt[threadIdx.x] * wgts[j], wgts[j] * derivs[(6*j+i)*PARTICLES_PER_BLOCK + threadIdx.x], dt[threadIdx.x] * derivs[(6*j+i)*PARTICLES_PER_BLOCK + threadIdx.x], dt[threadIdx.x] * wgts[j] * derivs[(6*j+i)*PARTICLES_PER_BLOCK + threadIdx.x]);
         }
     } 
 
@@ -615,7 +615,7 @@ __device__ void setup_particle(particle_t& p, double* srange_arr, double* trange
     double v_perp2 = p.v_perp*p.v_perp;
     double denom = 1 / (2*p.derivs[4]);
     p.mu = v_perp2 * denom;
-    printf("in setup_particle mu = %.15e, v_perp2=%.15e, denom=%.15e, AbsB=%.15e\n", p.mu, v_perp2, denom, p.derivs[4]);
+    // printf("in setup_particle mu = %.15e, v_perp2=%.15e, denom=%.15e, AbsB=%.15e\n", p.mu, v_perp2, denom, p.derivs[4]);
 
     // can at most do quarter of a revolution per step
     double r = sqrt(p.state[0]*p.state[0] + p.state[1]*p.state[1]);
@@ -919,17 +919,17 @@ __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* srange, 
         build_state(x_temp, 0, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, state, derivs, dt, srange, trange, zrange);
         __syncthreads();
 
-        if(threadIdx.x == 1){
-            // printf("build_state complete on particle %d\n", idx);
-            printf("x_temp: %.15e, %.15e, %.15e, %.15e\n", x_temp[0*PARTICLES_PER_BLOCK + threadIdx.x], x_temp[1*PARTICLES_PER_BLOCK + threadIdx.x], x_temp[2*PARTICLES_PER_BLOCK + threadIdx.x], x_temp[3*PARTICLES_PER_BLOCK + threadIdx.x]);
-            printf("symmetry_exploited: %d\n", symmetry_exploited[threadIdx.x]);
-            printf("index_i: %d, index_j: %d, index_k: %d\n", index_i[threadIdx.x], index_j[threadIdx.x], index_k[threadIdx.x]);
-            printf("r_shape: %.15e, %.15e, %.15e, %.15e\n", r_shape[0*PARTICLES_PER_BLOCK + threadIdx.x], r_shape[1*PARTICLES_PER_BLOCK + threadIdx.x], r_shape[2*PARTICLES_PER_BLOCK + threadIdx.x], r_shape[3*PARTICLES_PER_BLOCK + threadIdx.x]);
-            printf("phi_shape: %.15e, %.15e, %.15e, %.15e\n", phi_shape[0*PARTICLES_PER_BLOCK + threadIdx.x], phi_shape[1*PARTICLES_PER_BLOCK + threadIdx.x], phi_shape[2*PARTICLES_PER_BLOCK + threadIdx.x], phi_shape[3*PARTICLES_PER_BLOCK + threadIdx.x]);
-            printf("z_shape: %.15e, %.15e, %.15e, %.15e\n", z_shape[0*PARTICLES_PER_BLOCK + threadIdx.x], z_shape[1*PARTICLES_PER_BLOCK + threadIdx.x], z_shape[2*PARTICLES_PER_BLOCK + threadIdx.x], z_shape[3*PARTICLES_PER_BLOCK + threadIdx.x]);
+        // if(threadIdx.x == 1){
+        //     // printf("build_state complete on particle %d\n", idx);
+        //     printf("x_temp: %.15e, %.15e, %.15e, %.15e\n", x_temp[0*PARTICLES_PER_BLOCK + threadIdx.x], x_temp[1*PARTICLES_PER_BLOCK + threadIdx.x], x_temp[2*PARTICLES_PER_BLOCK + threadIdx.x], x_temp[3*PARTICLES_PER_BLOCK + threadIdx.x]);
+        //     printf("symmetry_exploited: %d\n", symmetry_exploited[threadIdx.x]);
+        //     printf("index_i: %d, index_j: %d, index_k: %d\n", index_i[threadIdx.x], index_j[threadIdx.x], index_k[threadIdx.x]);
+        //     printf("r_shape: %.15e, %.15e, %.15e, %.15e\n", r_shape[0*PARTICLES_PER_BLOCK + threadIdx.x], r_shape[1*PARTICLES_PER_BLOCK + threadIdx.x], r_shape[2*PARTICLES_PER_BLOCK + threadIdx.x], r_shape[3*PARTICLES_PER_BLOCK + threadIdx.x]);
+        //     printf("phi_shape: %.15e, %.15e, %.15e, %.15e\n", phi_shape[0*PARTICLES_PER_BLOCK + threadIdx.x], phi_shape[1*PARTICLES_PER_BLOCK + threadIdx.x], phi_shape[2*PARTICLES_PER_BLOCK + threadIdx.x], phi_shape[3*PARTICLES_PER_BLOCK + threadIdx.x]);
+        //     printf("z_shape: %.15e, %.15e, %.15e, %.15e\n", z_shape[0*PARTICLES_PER_BLOCK + threadIdx.x], z_shape[1*PARTICLES_PER_BLOCK + threadIdx.x], z_shape[2*PARTICLES_PER_BLOCK + threadIdx.x], z_shape[3*PARTICLES_PER_BLOCK + threadIdx.x]);
 
 
-        }
+        // }
 
         // printf("build_state complete on particle %d\n", idx);
 
@@ -966,9 +966,9 @@ __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* srange, 
         for(int i=0; i<7; ++i){
             out_arr[i] = block_interpolants[i*PARTICLES_PER_BLOCK + threadIdx.x];
 
-            if(threadIdx.x==1){
-                printf("interpolated value %d for particle %d: %.15e\n", i, idx, out_arr[i]);
-            }
+            // if(threadIdx.x==1){
+            //     printf("interpolated value %d for particle %d: %.15e\n", i, idx, out_arr[i]);
+            // }
         }
 
         if(symmetry_exploited[threadIdx.x]){
@@ -1070,7 +1070,7 @@ __global__ void test_gpu_derivs_kernel(double* quad_pts, double* srange, double*
         p.state[3] = vpar_val;
         p.v_total = vtotal;
         p.v_perp = sqrt(vtotal*vtotal -  vpar_val*vpar_val);
-        printf("v_perp = %.15e, v_par = %.15e, v_total = %.15e\n", p.v_perp, p.state[3], p.v_total);
+        // printf("v_perp = %.15e, v_par = %.15e, v_total = %.15e\n", p.v_perp, p.state[3], p.v_total);
 
         setup_particle(p, srange, trange, zrange, quad_pts, 1e-2, m, q);
 
@@ -1101,7 +1101,7 @@ __global__ void test_gpu_derivs_kernel(double* quad_pts, double* srange, double*
         }
         mu[threadIdx.x] = p.mu;
 
-        printf("mu value stored in shared memory: %.15e\n", mu[threadIdx.x]);
+        // printf("mu value stored in shared memory: %.15e\n", mu[threadIdx.x]);
 
         int nphi = (trange[2]-1)/3;
         int nz = (zrange[2]-1)/3;
