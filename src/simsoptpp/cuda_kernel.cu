@@ -601,6 +601,37 @@ __device__ void build_state(particle_t& p, int deriv_id, double* rrange_arr, dou
 
 }
 
+__device__ void setup_particle(double* mu, double* t, double* dt, double* dtmax, double* x_temp, bool* symmetry_exploited, int* index_i, int* index_j, int* index_k,
+                            double* quad_pts, double* r_shape, double* phi_shape, double* z_shape, double* state, double* derivs,
+                            double* rrange_arr, double* phirange_arr, double* zrange_arr, double vtotal, double tmax, double m, double q){
+    t[threadIdx.x] = 0.0;
+    dt[threadIdx.x] = 0.0;
+    symmetry_exploited[threadIdx.x] = false;
+    build_state(x_temp, 0, symmetry_exploited, index_i, index_j, index_k,
+                            r_shape, phi_shape, z_shape, state, derivs, dt,
+                            rrange_arr, phirange_arr, zrange_arr);
+    // dummy call to get norm B
+    mu[threadIdx.x] = -1.0; // initialize mu
+    int nphi = (phirange_arr[2]-1)/3;
+    int nz = (zrange_arr[2]-1)/3;
+    calc_derivs(derivs, 0, quad_pts, x_temp, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, mu, m, q, nphi, nz);
+
+    double v_par = state[3*PARTICLES_PER_BLOCK + threadIdx.x];
+    double v_perp2 = vtotal*vtotal - v_par*v_par;
+    double modB = derivs[4*PARTICLES_PER_BLOCK + threadIdx.x];
+    double denom = 1 / (2*modB);
+    mu[threadIdx.x] = v_perp2 * denom;
+
+    double x = state[0*PARTICLES_PER_BLOCK + threadIdx.x];
+    double y = state[1*PARTICLES_PER_BLOCK + threadIdx.x];
+    // can at most do quarter of a revolution per step
+    double r = sqrt(x*x + y*y);
+    dtmax[threadIdx.x] = r*0.5*M_PI/vtotal;
+    dt[threadIdx.x] = 1e-3*dtmax[threadIdx.x];
+    // printf("initial dt = %.15e, r = %.15e, v_total = %.15e\n", dt[threadIdx.x], r, vtotal);
+
+}
+
 // set initial time step, calculate mu
 __device__ void setup_particle(particle_t& p, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr,
                          double tmax, double m, double q){
@@ -1072,8 +1103,6 @@ __global__ void test_gpu_derivs_kernel(double* quad_pts, double* srange, double*
         p.v_perp = sqrt(vtotal*vtotal -  vpar_val*vpar_val);
         // printf("v_perp = %.15e, v_par = %.15e, v_total = %.15e\n", p.v_perp, p.state[3], p.v_total);
 
-        setup_particle(p, srange, trange, zrange, quad_pts, 1e-2, m, q);
-
         __shared__ double x_temp[4 * PARTICLES_PER_BLOCK];
         __shared__ double derivs[42 * PARTICLES_PER_BLOCK];
         __shared__ double dt[PARTICLES_PER_BLOCK];
@@ -1085,21 +1114,35 @@ __global__ void test_gpu_derivs_kernel(double* quad_pts, double* srange, double*
         __shared__ double phi_shape[4 * PARTICLES_PER_BLOCK];
         __shared__ double z_shape[4 * PARTICLES_PER_BLOCK];
         __shared__ double mu[PARTICLES_PER_BLOCK];
+        __shared__ double t[PARTICLES_PER_BLOCK];
+        __shared__ double dtmax[PARTICLES_PER_BLOCK];
+        __shared__ double state[4 * PARTICLES_PER_BLOCK];
+        for(int i=0; i<4; ++i){
+            state[i*PARTICLES_PER_BLOCK + threadIdx.x] = p.state[i];
+        }
 
-        for(int i=0; i<4; ++i){
-            x_temp[i*PARTICLES_PER_BLOCK + threadIdx.x] = p.x_temp[i];
-        }
-        dt[threadIdx.x] = p.dt;
-        symmetry_exploited[threadIdx.x] = p.symmetry_exploited;
-        index_i[threadIdx.x] = p.i;
-        index_j[threadIdx.x] = p.j;
-        index_k[threadIdx.x] = p.k;
-        for(int i=0; i<4; ++i){
-            r_shape[i*PARTICLES_PER_BLOCK + threadIdx.x] = p.r_shape[i];
-            phi_shape[i*PARTICLES_PER_BLOCK + threadIdx.x] = p.phi_shape[i];
-            z_shape[i*PARTICLES_PER_BLOCK + threadIdx.x] = p.z_shape[i];
-        }
-        mu[threadIdx.x] = p.mu;
+        setup_particle(mu, t, dt, dtmax, x_temp, symmetry_exploited, index_i, index_j, index_k,
+                            quad_pts, r_shape, phi_shape, z_shape, state, derivs,
+                            srange, trange, zrange, p.v_total, 1e-2, m, q);
+
+        // setup_particle(p, srange, trange, zrange, quad_pts, 1e-2, m, q);
+
+
+
+        // for(int i=0; i<4; ++i){
+        //     x_temp[i*PARTICLES_PER_BLOCK + threadIdx.x] = p.x_temp[i];
+        // }
+        // dt[threadIdx.x] = p.dt;
+        // symmetry_exploited[threadIdx.x] = p.symmetry_exploited;
+        // index_i[threadIdx.x] = p.i;
+        // index_j[threadIdx.x] = p.j;
+        // index_k[threadIdx.x] = p.k;
+        // for(int i=0; i<4; ++i){
+        //     r_shape[i*PARTICLES_PER_BLOCK + threadIdx.x] = p.r_shape[i];
+        //     phi_shape[i*PARTICLES_PER_BLOCK + threadIdx.x] = p.phi_shape[i];
+        //     z_shape[i*PARTICLES_PER_BLOCK + threadIdx.x] = p.z_shape[i];
+        // }
+        // mu[threadIdx.x] = p.mu;
 
         // printf("mu value stored in shared memory: %.15e\n", mu[threadIdx.x]);
 
