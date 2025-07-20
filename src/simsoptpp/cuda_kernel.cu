@@ -657,6 +657,55 @@ __device__ void setup_particle(particle_t& p, double* srange_arr, double* trange
 	//printf("initial dt = %.15e, r = %.15e, v_total = %.15e\n", p.dt, r, v_total);
 }
 
+__device__ void adjust_time(double* t, double* dt, double* state, double* derivs, double* x_temp, bool* has_left, double atol, double rtol, double tmax, double* dtmax){
+    if(has_left[threadIdx.x]){
+        return;
+    }
+    const double bhat1 = 71.0 / 57600.0, bhat3 = -71.0 / 16695.0, bhat4 = 71.0 / 1920.0, bhat5 = -17253.0 / 339200.0, bhat6 = 22.0 / 525.0, bhat7 = -1.0 / 40.0;
+    // Compute  error
+    // https://live.boost.org/doc/libs/1_82_0/libs/numeric/odeint/doc/html/boost_numeric_odeint/odeint_in_detail/steppers.html
+    // resolve typo in boost docs: https://numerical.recipes/book.html
+    double max_err = 0.0;
+    double err_elt;
+    for(int i = 0; i < 4; i++) {
+        double state_i = state[i*PARTICLES_PER_BLOCK + threadIdx.x];
+        double deriv_i = derivs[(6*0 + i)*PARTICLES_PER_BLOCK + threadIdx.x];
+        err_elt = dt[threadIdx.x]*(bhat1 * deriv_i
+                                 + bhat3 * derivs[(6*2 + i)*PARTICLES_PER_BLOCK + threadIdx.x] 
+                                 + bhat4 * derivs[(6*3 + i)*PARTICLES_PER_BLOCK + threadIdx.x] 
+                                 + bhat5 * derivs[(6*4 + i)*PARTICLES_PER_BLOCK + threadIdx.x] 
+                                 + bhat6 * derivs[(6*5 + i)*PARTICLES_PER_BLOCK + threadIdx.x] 
+                                 + bhat7 * derivs[(6*6 + i)*PARTICLES_PER_BLOCK + threadIdx.x]);
+        err_elt = fabs(err_elt) / (atol + rtol*(fabs(state_i) + dt[threadIdx.x]*fabs(deriv_i)));
+        max_err = fmax(max_err, err_elt);
+    }
+
+    // Compute new step size
+    double dt_new = dt[threadIdx.x]*0.9*pow(max_err, -1.0/3.0);
+    dt_new = fmax(dt_new, 0.2 * dt[threadIdx.x]);  // Limit step size reduction
+    dt_new = fmin(dt_new, 5.0 * dt[threadIdx.x]);  // Limit step size increase
+    dt_new = fmin(dtmax[threadIdx.x], dt_new);
+    if ((0.5 < max_err) & (max_err < 1.0)){
+        dt_new = dt[threadIdx.x];
+    }
+
+    if(max_err <= 1.0) {
+        // Accept the step
+        t[threadIdx.x] += dt[threadIdx.x];
+        dt[threadIdx.x] = fmin(dt_new, tmax - t[threadIdx.x]);
+
+        for(int i = 0; i < 4; i++) {
+            state[i*PARTICLES_PER_BLOCK + threadIdx.x] = x_temp[i*PARTICLES_PER_BLOCK + threadIdx.x];
+        }
+
+        
+        has_left[threadIdx.x] = derivs[(6*6 + 5)*PARTICLES_PER_BLOCK + threadIdx.x] < 0; // boundary dist fn at new location
+    } else {
+        // Reject the step and try again with smaller dt
+        dt[threadIdx.x] = dt_new;
+    }
+}
+
 __device__ void adjust_time(particle_t& p, double tmax){
     if(p.has_left){
         return;
@@ -713,8 +762,39 @@ __device__ void adjust_time(particle_t& p, double tmax){
     }
 
 }
+
+__device__ void trace_particle(double* state, double* derivs, double* dt, double* t, double* dtmax, double vtotal, double* x_temp, bool* has_left, double* mu, double tmax, 
+                    bool* symmetry_exploited, int* index_i, int* index_j, int* index_k,
+                    double* quadpts_arr, double* r_shape, double* phi_shape, double* z_shape,
+                    double* srange_arr, double* trange_arr, double* zrange_arr, double m, double q){
+    setup_particle(mu, t, dt, dtmax, x_temp, symmetry_exploited, index_i, index_j, index_k,
+                    quadpts_arr, r_shape, phi_shape, z_shape, state, derivs,
+                    srange_arr, trange_arr, zrange_arr, vtotal, tmax, m, q);
+    int nphi = (trange_arr[2]-1)/3;
+    int nz = (zrange_arr[2]-1)/3;
+    while(t[threadIdx.x] < tmax){
+        // printf("particle %d at time %.15e\n", threadIdx.x, t[threadIdx.x]);
+        for(int k=0; k<7; ++k){
+            build_state(x_temp, k, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, state, derivs, dt,
+                        srange_arr, trange_arr, zrange_arr);
+
+            calc_derivs(derivs, k, quadpts_arr, x_temp, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, mu, m, q, 
+                        nphi, nz);
+        }
+        double atol=1e-9;
+        double rtol=1e-9;
+        adjust_time(t, dt, state, derivs, x_temp, has_left, atol, rtol, 1e-2, dtmax);
+        if(has_left[threadIdx.x]){
+            // printf("particle %d has left the device at time %.15e\n", threadIdx.x, t[threadIdx.x]);
+            return;
+        }
+    }
+}
+
+
 __device__    void trace_particle(particle_t& p, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr,
                          double tmax, double m, double q){
+
 
     setup_particle(p, srange_arr, trange_arr, zrange_arr, quadpts_arr, tmax, m, q);
     int counter = 0;
@@ -737,7 +817,42 @@ __global__ void particle_trace_kernel(particle_t* particles, double* srange_arr,
                         double tmax, double m, double q, int nparticles){
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
     if(idx < nparticles){
-        trace_particle(particles[idx], srange_arr, trange_arr, zrange_arr, quadpts_arr, tmax, m, q);
+        particle_t p = particles[idx];
+
+        // printf("v_perp = %.15e, v_par = %.15e, v_total = %.15e\n", p.v_perp, p.state[3], p.v_total);
+
+        __shared__ double x_temp[4 * PARTICLES_PER_BLOCK];
+        __shared__ double derivs[42 * PARTICLES_PER_BLOCK];
+        __shared__ double dt[PARTICLES_PER_BLOCK];
+        __shared__ bool symmetry_exploited[PARTICLES_PER_BLOCK];
+        __shared__ int index_i[PARTICLES_PER_BLOCK];
+        __shared__ int index_j[PARTICLES_PER_BLOCK];
+        __shared__ int index_k[PARTICLES_PER_BLOCK];
+        __shared__ double r_shape[4 * PARTICLES_PER_BLOCK];
+        __shared__ double phi_shape[4 * PARTICLES_PER_BLOCK];
+        __shared__ double z_shape[4 * PARTICLES_PER_BLOCK];
+        __shared__ double mu[PARTICLES_PER_BLOCK];
+        __shared__ double t[PARTICLES_PER_BLOCK];
+        __shared__ double dtmax[PARTICLES_PER_BLOCK];
+        __shared__ double state[4 * PARTICLES_PER_BLOCK];
+        __shared__ bool has_left[PARTICLES_PER_BLOCK];
+
+        has_left[threadIdx.x] = false;
+        for(int i=0; i<4; ++i){
+            state[i*PARTICLES_PER_BLOCK + threadIdx.x] = p.state[i];
+        }
+        trace_particle(state, derivs, dt, t, dtmax, p.v_total, x_temp, has_left, mu, tmax,
+                        symmetry_exploited, index_i, index_j, index_k,
+                        quadpts_arr, r_shape, phi_shape, z_shape,
+                        srange_arr, trange_arr, zrange_arr, m, q);
+        // trace_particle(particles[idx], srange_arr, trange_arr, zrange_arr, quadpts_arr, tmax, m, q);
+
+        particles[idx].dt = dt[threadIdx.x];
+        particles[idx].t = t[threadIdx.x];
+        particles[idx].has_left = has_left[threadIdx.x];
+        for(int i=0; i<4; ++i){
+            particles[idx].state[i] = state[i*PARTICLES_PER_BLOCK + threadIdx.x];
+        }
     }
 }
 
@@ -1237,18 +1352,61 @@ __global__ void test_gpu_timestep_kernel(particle_t* particles, double* srange_a
                         double m, double q, int nparticles){
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
     if(idx < nparticles){
+        particle_t p = particles[idx];
+
+        // printf("v_perp = %.15e, v_par = %.15e, v_total = %.15e\n", p.v_perp, p.state[3], p.v_total);
+
+        __shared__ double x_temp[4 * PARTICLES_PER_BLOCK];
+        __shared__ double derivs[42 * PARTICLES_PER_BLOCK];
+        __shared__ double dt[PARTICLES_PER_BLOCK];
+        __shared__ bool symmetry_exploited[PARTICLES_PER_BLOCK];
+        __shared__ int index_i[PARTICLES_PER_BLOCK];
+        __shared__ int index_j[PARTICLES_PER_BLOCK];
+        __shared__ int index_k[PARTICLES_PER_BLOCK];
+        __shared__ double r_shape[4 * PARTICLES_PER_BLOCK];
+        __shared__ double phi_shape[4 * PARTICLES_PER_BLOCK];
+        __shared__ double z_shape[4 * PARTICLES_PER_BLOCK];
+        __shared__ double mu[PARTICLES_PER_BLOCK];
+        __shared__ double t[PARTICLES_PER_BLOCK];
+        __shared__ double dtmax[PARTICLES_PER_BLOCK];
+        __shared__ double state[4 * PARTICLES_PER_BLOCK];
+        __shared__ bool has_left[PARTICLES_PER_BLOCK];
+
+        has_left[threadIdx.x] = false;
+        for(int i=0; i<4; ++i){
+            state[i*PARTICLES_PER_BLOCK + threadIdx.x] = p.state[i];
+        }
+
+        setup_particle(mu, t, dt, dtmax, x_temp, symmetry_exploited, index_i, index_j, index_k,
+                            quadpts_arr, r_shape, phi_shape, z_shape, state, derivs,
+                            srange_arr, trange_arr, zrange_arr, p.v_total, 1e-2, m, q);
     // printf("tracing particle %d\n", idx);
-        setup_particle(particles[idx], srange_arr, trange_arr, zrange_arr, quadpts_arr, 1e-2, m, q);
-        while(particles[idx].t == 0.0){
+        int nphi = (trange_arr[2]-1)/3;
+        int nz = (zrange_arr[2]-1)/3;
+        // setup_particle(particles[idx], srange_arr, trange_arr, zrange_arr, quadpts_arr, 1e-2, m, q);
+        while(t[threadIdx.x] == 0.0){
             for(int k=0; k<7; ++k){
                 // printf("building state %d\n", k);
-                build_state(particles[idx], k, srange_arr, trange_arr, zrange_arr);
+                build_state(x_temp, k, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, state, derivs, dt,
+                            srange_arr, trange_arr, zrange_arr);
+                // build_state(particles[idx], k, srange_arr, trange_arr, zrange_arr);
                 // printf("calclulating derivative %d\n", k);
-                calc_derivs(particles[idx], particles[idx].derivs + 6*k, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, particles[idx].mu);
+                calc_derivs(derivs, k, quadpts_arr, x_temp, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, mu, m, q, 
+                            nphi, nz);
+                // calc_derivs(particles[idx], particles[idx].derivs + 6*k, srange_arr, trange_arr, zrange_arr, quadpts_arr, m, q, particles[idx].mu);
             }
-            adjust_time(particles[idx], 1e-2);
+            // adjust_time(particles[idx], 1e-2);
+            double atol=1e-9;
+            double rtol=1e-9;
+            adjust_time(t, dt, state, derivs, x_temp, has_left, atol, rtol, 1e-2, dtmax);
         }
         // printf("tracing particle %d finished at t=%.15e\n", idx, particles[idx].t);
+        particles[idx].dt = dt[threadIdx.x];
+        particles[idx].t = t[threadIdx.x];
+        particles[idx].has_left = has_left[threadIdx.x];
+        for(int i=0; i<4; ++i){
+            particles[idx].state[i] = state[i*PARTICLES_PER_BLOCK + threadIdx.x];
+        }
     }
     return;
 }

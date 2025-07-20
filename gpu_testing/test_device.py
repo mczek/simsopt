@@ -19,13 +19,13 @@ from test_interpolant import *
 
 np.random.seed(1800)
 tmax = 1e-4
-nparticles = 25000
+nparticles = 10000
 n_metagrid_pts = 30
 
 ### CREATE A FIELD FOR TRACING
 ID = 1655332
 fID = ID // 1000
-[surfaces, ma, coils] = load("/mnt/home/mczekanski/serial1655332.json")
+[surfaces, ma, coils] = load("./serial1655332.json")
 nfp = surfaces[0].nfp
 nc_per_hp = len(coils)//nfp//2
 base_coils = coils[:nc_per_hp]
@@ -46,8 +46,9 @@ label = Volume(surface_hr)
 targetlabel = np.sign(surface_hr.volume()) * 2*np.pi * 1.0 * (np.pi * (mR/2)**2)
 boozer_surface = BoozerSurface(bs_bs, surface_hr, label, targetlabel)
 
-df = pd.read_pickle('/mnt/home/mczekanski/ceph/QUASR_08072024/QUASR_08072024.pkl')
-iota0 = df[df.ID==ID].iloc[0].mean_iota
+# df = pd.read_pickle('/mnt/home/mczekanski/ceph/QUASR_08072024/QUASR_08072024.pkl')
+# iota0 = df[df.ID==ID].iloc[0].mean_iota
+iota0 = 1.2
 print("iota = ", iota0)
 coil_currents = [c.current.get_value() for c in coils]
 G0 = 2. * np.pi * np.sum(np.abs(coil_currents)) * (4 * np.pi * 10**(-7) / (2 * np.pi))
@@ -66,7 +67,7 @@ for s in surfaces + [surface_hr]:
     s.x = scale*s.x
 for c in base_curves:
     c.x = scale*c.x
-ma.x = scale * ma.x
+# ma.x = scale * ma.x
 
 # MAKE THE MAGNETIC FIELD ON AXIS 5.685257882303897
 bs = BiotSavart(coils)
