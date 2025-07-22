@@ -116,36 +116,54 @@ __host__ __device__ void shape(double x, double* shape){
 __device__ void interpolate(double*  out, const double* __restrict__ data, const int* index_i, const int* __restrict__ index_j, const int* __restrict__ index_k, 
     const double* __restrict__ r_shape, const double* __restrict__ phi_shape, const double* __restrict__ z_shape, int nphi, int nz, int n){
 
+    for(int idx = threadIdx.x; idx< PARTICLES_PER_BLOCK*64*n; idx += PARTICLES_PER_BLOCK){
+        int zz = idx % n;
+        int temp = idx / n;
+
+        int kk = temp % 4; // zeta grid
+        temp /= 4;
+        int jj = temp % 4; // theta grid
+        temp /= 4;
+        int ii = temp % 4; // s grid
+        temp /= 4;
+        int particle_id = temp; // particle id
+
+        int i = index_i[particle_id];
+        int j = index_j[particle_id];
+        int k = index_k[particle_id];
+
+        int row_idx = 64*(i*nphi*nz + j*nz + k) + 16*ii + 4*jj + kk;
+        double shape_val = r_shape[ii*PARTICLES_PER_BLOCK + particle_id] * phi_shape[jj*PARTICLES_PER_BLOCK + particle_id] * z_shape[kk*PARTICLES_PER_BLOCK + particle_id];
+        atomicAdd(&out[PARTICLES_PER_BLOCK*zz + particle_id], data[n*row_idx + zz] * shape_val);
+    }
     // printf("particle %d: accessing index arrays at index: %d\n", threadIdx.x, threadIdx.x);
-    int i = index_i[threadIdx.x];
-    int j = index_j[threadIdx.x];
-    int k = index_k[threadIdx.x];
+
     // printf("particle %d: i, j, k = %d, %d, %d\n", i, j, k);
 
-    int cell_start = 64*(i*nphi*nz + j*nz + k);
-    for(int ii=0; ii<=3; ++ii){ // s grid
-        for(int jj=0; jj<=3; ++jj){ // theta grid           
-            for(int kk=0; kk<=3; ++kk){ // zeta grid
-                int row_idx = cell_start + 16*ii + 4*jj + kk;
-                // printf("particle %d: row_index=%d\n", threadIdx.x, row_idx);               
-                // printf("ii=%d, jj=%d, kk=%d, n=%d\n", ii, jj, kk, n);
-                // printf("particle %d: accessing shape arrays at indices %d %d %d\n", 4*threadIdx.x + ii, 4*threadIdx.x + jj, 4*threadIdx.x+kk);
-                double shape_val = r_shape[ii*PARTICLES_PER_BLOCK +threadIdx.x]*phi_shape[jj*PARTICLES_PER_BLOCK +threadIdx.x]*z_shape[kk*PARTICLES_PER_BLOCK +threadIdx.x];
-                // printf("shape_val = %.15e\n", shape_val);
-                for(int zz=0; zz<n; ++zz){
-                    // printf("index access: %d\n", n*row_idx + zz);
-                    // printf("particle %d: accessing out at index %d\n", threadIdx.x, PARTICLES_PER_BLOCK*zz + threadIdx.x);
-                    // printf("particle %d: accessing data at index %d\n", threadIdx.x, n*row_idx +zz);
-                    // if(threadIdx.x==1){
-                    //     printf("particle %d: accessing data at index %d, value = %.15e, shape_val=%.15e\n", threadIdx.x, n*row_idx + zz, data[n*row_idx + zz], shape_val);
-                    // }
-                    out[PARTICLES_PER_BLOCK*zz + threadIdx.x] += data[n*row_idx + zz]*shape_val;
-                    // printf("wrote to interpolant element %d\n", zz);
-                }
-            }
-        }
+    // int cell_start = 64*(i*nphi*nz + j*nz + k);
+    // for(int ii=0; ii<=3; ++ii){ // s grid
+    //     for(int jj=0; jj<=3; ++jj){ // theta grid           
+    //         for(int kk=0; kk<=3; ++kk){ // zeta grid
+    //             int row_idx = cell_start + 16*ii + 4*jj + kk;
+    //             // printf("particle %d: row_index=%d\n", threadIdx.x, row_idx);               
+    //             // printf("ii=%d, jj=%d, kk=%d, n=%d\n", ii, jj, kk, n);
+    //             // printf("particle %d: accessing shape arrays at indices %d %d %d\n", 4*threadIdx.x + ii, 4*threadIdx.x + jj, 4*threadIdx.x+kk);
+    //             double shape_val = r_shape[ii*PARTICLES_PER_BLOCK +threadIdx.x]*phi_shape[jj*PARTICLES_PER_BLOCK +threadIdx.x]*z_shape[kk*PARTICLES_PER_BLOCK +threadIdx.x];
+    //             // printf("shape_val = %.15e\n", shape_val);
+    //             for(int zz=0; zz<n; ++zz){
+    //                 // printf("index access: %d\n", n*row_idx + zz);
+    //                 // printf("particle %d: accessing out at index %d\n", threadIdx.x, PARTICLES_PER_BLOCK*zz + threadIdx.x);
+    //                 // printf("particle %d: accessing data at index %d\n", threadIdx.x, n*row_idx +zz);
+    //                 // if(threadIdx.x==1){
+    //                 //     printf("particle %d: accessing data at index %d, value = %.15e, shape_val=%.15e\n", threadIdx.x, n*row_idx + zz, data[n*row_idx + zz], shape_val);
+    //                 // }
+    //                 out[PARTICLES_PER_BLOCK*zz + threadIdx.x] += data[n*row_idx + zz]*shape_val;
+    //                 // printf("wrote to interpolant element %d\n", zz);
+    //             }
+    //         }
+    //     }
 
-    }
+    // }
 }
 
 __device__ void calc_derivs(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited, int* index_i, int* index_j, int* index_k, double* r_shape, double* phi_shape, double* z_shape,
@@ -1027,11 +1045,24 @@ extern "C" py::array_t<double> test_interpolation(py::array_t<double> quad_pts, 
 
 __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* srange, double* trange, double* zrange, double* loc, double* out, int n, int n_points){
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
-    if(idx < n_points){
-        double* loc_arr = loc + 3*idx;
-        double* out_arr  =  out + idx*n;
+    particle_t p;
+    __shared__ double x_temp[4 * PARTICLES_PER_BLOCK];
+    __shared__ bool symmetry_exploited[PARTICLES_PER_BLOCK];
+    __shared__ int index_i[PARTICLES_PER_BLOCK];
+    __shared__ int index_j[PARTICLES_PER_BLOCK];
+    __shared__ int index_k[PARTICLES_PER_BLOCK];
+    __shared__ double r_shape[4 * PARTICLES_PER_BLOCK];
+    __shared__ double phi_shape[4 * PARTICLES_PER_BLOCK];
+    __shared__ double z_shape[4 * PARTICLES_PER_BLOCK];
+    __shared__ double state[4 * PARTICLES_PER_BLOCK];
+    __shared__ double derivs[42 * PARTICLES_PER_BLOCK];
+    __shared__ double dt[PARTICLES_PER_BLOCK];
 
-        particle_t p;
+    double* loc_arr = loc + 3*idx;
+    double* out_arr  =  out + idx*n;
+    if(idx < n_points){
+
+
         double x = loc_arr[0]*cos(loc_arr[1]);
         double y = loc_arr[0]*sin(loc_arr[1]);
         double z = loc_arr[2];
@@ -1046,24 +1077,15 @@ __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* srange, 
         p.dt = 1e-3; //needed for build_state
 
         // printf("x=%.15e, y=%.15e, z=%.15e\n", p.state[0], p.state[1], p.state[2]);
-        __shared__ double x_temp[4 * PARTICLES_PER_BLOCK];
-        __shared__ bool symmetry_exploited[PARTICLES_PER_BLOCK];
-        __shared__ int index_i[PARTICLES_PER_BLOCK];
-        __shared__ int index_j[PARTICLES_PER_BLOCK];
-        __shared__ int index_k[PARTICLES_PER_BLOCK];
-        __shared__ double r_shape[4 * PARTICLES_PER_BLOCK];
-        __shared__ double phi_shape[4 * PARTICLES_PER_BLOCK];
-        __shared__ double z_shape[4 * PARTICLES_PER_BLOCK];
-        __shared__ double state[4 * PARTICLES_PER_BLOCK];
-        __shared__ double derivs[42 * PARTICLES_PER_BLOCK];
-        __shared__ double dt[PARTICLES_PER_BLOCK];
+
         dt[threadIdx.x] = 1e-3; // needed for build_state
         symmetry_exploited[threadIdx.x] = false;
         for(int i=0; i<4; ++i){
             state[i*PARTICLES_PER_BLOCK + threadIdx.x] = p.state[i];
         }
         build_state(x_temp, 0, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, state, derivs, dt, srange, trange, zrange);
-        __syncthreads();
+    }
+
 
         // if(threadIdx.x == 1){
         //     // printf("build_state complete on particle %d\n", idx);
@@ -1105,28 +1127,31 @@ __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* srange, 
         // printf("calling interpolate for particle %d\n", threadIdx.x);
         int nphi = (trange[2]-1)/3;
         int nz = (zrange[2]-1)/3;
+
+        __syncthreads();
         interpolate(block_interpolants, quad_pts, index_i, index_j, index_k, r_shape, phi_shape, z_shape, nphi, nz, 7);
+        __syncthreads();
         // printf("returned from interpolate for particle %d\n", threadIdx.x);
         // interpolate(p, quad_pts, out_arr, srange, trange, zrange, n);
+        if(idx < n_points){
+            for(int i=0; i<7; ++i){
+                out_arr[i] = block_interpolants[i*PARTICLES_PER_BLOCK + threadIdx.x];
 
-        for(int i=0; i<7; ++i){
-            out_arr[i] = block_interpolants[i*PARTICLES_PER_BLOCK + threadIdx.x];
+                // if(threadIdx.x==1){
+                //     printf("interpolated value %d for particle %d: %.15e\n", i, idx, out_arr[i]);
+                // }
+            }
 
-            // if(threadIdx.x==1){
-            //     printf("interpolated value %d for particle %d: %.15e\n", i, idx, out_arr[i]);
-            // }
+            if(symmetry_exploited[threadIdx.x]){
+                out_arr[0] *= -1.0;
+                out_arr[4] *= -1.0;
+                out_arr[5] *= -1.0;
+
+            }
         }
 
-        if(symmetry_exploited[threadIdx.x]){
-            out_arr[0] *= -1.0;
-            out_arr[4] *= -1.0;
-            out_arr[5] *= -1.0;
-
-        }
 
 
-
-    }
 }
 
 
