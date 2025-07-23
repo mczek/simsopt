@@ -16,7 +16,8 @@ namespace py = pybind11;
 #include "boozermagneticfield.h"
 #include "regular_grid_interpolant_3d.h"
 
-#define PARTICLES_PER_BLOCK 32
+#define THREADS_PER_BLOCK 32
+#define PARTICLES_PER_BLOCK 4
 
 #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
@@ -116,7 +117,7 @@ __host__ __device__ void shape(double x, double* shape){
 __device__ void interpolate(double*  out, const double* __restrict__ data, const int* index_i, const int* __restrict__ index_j, const int* __restrict__ index_k, 
     const double* __restrict__ r_shape, const double* __restrict__ phi_shape, const double* __restrict__ z_shape, int nphi, int nz, int n){
 
-    for(int idx = threadIdx.x; idx< PARTICLES_PER_BLOCK*64*n; idx += PARTICLES_PER_BLOCK){
+    for(int idx = threadIdx.x; idx< PARTICLES_PER_BLOCK*64*n; idx += THREADS_PER_BLOCK){
         int zz = idx % n;
         int temp = idx / n;
 
@@ -136,34 +137,6 @@ __device__ void interpolate(double*  out, const double* __restrict__ data, const
         double shape_val = r_shape[ii*PARTICLES_PER_BLOCK + particle_id] * phi_shape[jj*PARTICLES_PER_BLOCK + particle_id] * z_shape[kk*PARTICLES_PER_BLOCK + particle_id];
         atomicAdd(&out[PARTICLES_PER_BLOCK*zz + particle_id], data[n*row_idx + zz] * shape_val);
     }
-    // printf("particle %d: accessing index arrays at index: %d\n", threadIdx.x, threadIdx.x);
-
-    // printf("particle %d: i, j, k = %d, %d, %d\n", i, j, k);
-
-    // int cell_start = 64*(i*nphi*nz + j*nz + k);
-    // for(int ii=0; ii<=3; ++ii){ // s grid
-    //     for(int jj=0; jj<=3; ++jj){ // theta grid           
-    //         for(int kk=0; kk<=3; ++kk){ // zeta grid
-    //             int row_idx = cell_start + 16*ii + 4*jj + kk;
-    //             // printf("particle %d: row_index=%d\n", threadIdx.x, row_idx);               
-    //             // printf("ii=%d, jj=%d, kk=%d, n=%d\n", ii, jj, kk, n);
-    //             // printf("particle %d: accessing shape arrays at indices %d %d %d\n", 4*threadIdx.x + ii, 4*threadIdx.x + jj, 4*threadIdx.x+kk);
-    //             double shape_val = r_shape[ii*PARTICLES_PER_BLOCK +threadIdx.x]*phi_shape[jj*PARTICLES_PER_BLOCK +threadIdx.x]*z_shape[kk*PARTICLES_PER_BLOCK +threadIdx.x];
-    //             // printf("shape_val = %.15e\n", shape_val);
-    //             for(int zz=0; zz<n; ++zz){
-    //                 // printf("index access: %d\n", n*row_idx + zz);
-    //                 // printf("particle %d: accessing out at index %d\n", threadIdx.x, PARTICLES_PER_BLOCK*zz + threadIdx.x);
-    //                 // printf("particle %d: accessing data at index %d\n", threadIdx.x, n*row_idx +zz);
-    //                 // if(threadIdx.x==1){
-    //                 //     printf("particle %d: accessing data at index %d, value = %.15e, shape_val=%.15e\n", threadIdx.x, n*row_idx + zz, data[n*row_idx + zz], shape_val);
-    //                 // }
-    //                 out[PARTICLES_PER_BLOCK*zz + threadIdx.x] += data[n*row_idx + zz]*shape_val;
-    //                 // printf("wrote to interpolant element %d\n", zz);
-    //             }
-    //         }
-    //     }
-
-    // }
 }
 
 __device__ void calc_derivs(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited, int* index_i, int* index_j, int* index_k, double* r_shape, double* phi_shape, double* z_shape,
@@ -1044,7 +1017,7 @@ extern "C" py::array_t<double> test_interpolation(py::array_t<double> quad_pts, 
 }
 
 __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* srange, double* trange, double* zrange, double* loc, double* out, int n, int n_points){
-    int idx = threadIdx.x + blockIdx.x*blockDim.x;
+    int idx = threadIdx.x + blockIdx.x*PARTICLES_PER_BLOCK;
     particle_t p;
     __shared__ double x_temp[4 * PARTICLES_PER_BLOCK];
     __shared__ bool symmetry_exploited[PARTICLES_PER_BLOCK];
@@ -1058,9 +1031,12 @@ __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* srange, 
     __shared__ double derivs[42 * PARTICLES_PER_BLOCK];
     __shared__ double dt[PARTICLES_PER_BLOCK];
 
+    __shared__ double block_interpolants[7*PARTICLES_PER_BLOCK];
+
+
     double* loc_arr = loc + 3*idx;
     double* out_arr  =  out + idx*n;
-    if(idx < n_points){
+    if(threadIdx.x < PARTICLES_PER_BLOCK){
 
 
         double x = loc_arr[0]*cos(loc_arr[1]);
@@ -1084,6 +1060,15 @@ __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* srange, 
             state[i*PARTICLES_PER_BLOCK + threadIdx.x] = p.state[i];
         }
         build_state(x_temp, 0, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, state, derivs, dt, srange, trange, zrange);
+
+
+        for(int i=0; i<7; ++i){
+            block_interpolants[i*PARTICLES_PER_BLOCK + threadIdx.x] = 0.0;
+        }
+    } else {
+        index_i[threadIdx.x] = 0;
+        index_j[threadIdx.x] = 0;
+        index_k[threadIdx.x] = 0;
     }
 
 
@@ -1119,10 +1104,6 @@ __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* srange, 
         //     z_shape[4*threadIdx.x + i] = p.z_shape[i];
         // }
 
-        __shared__ double block_interpolants[7*PARTICLES_PER_BLOCK];
-        for(int i=0; i<7; ++i){
-            block_interpolants[i*PARTICLES_PER_BLOCK + threadIdx.x] = 0.0;
-        }
         
         // printf("calling interpolate for particle %d\n", threadIdx.x);
         int nphi = (trange[2]-1)/3;
@@ -1133,7 +1114,7 @@ __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* srange, 
         __syncthreads();
         // printf("returned from interpolate for particle %d\n", threadIdx.x);
         // interpolate(p, quad_pts, out_arr, srange, trange, zrange, n);
-        if(idx < n_points){
+        if(threadIdx.x < PARTICLES_PER_BLOCK){
             for(int i=0; i<7; ++i){
                 out_arr[i] = block_interpolants[i*PARTICLES_PER_BLOCK + threadIdx.x];
 
@@ -1199,8 +1180,9 @@ extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_p
 
 
 
-    int nthreads = PARTICLES_PER_BLOCK;
-    int nblks = n_points / nthreads + 1;
+    int nthreads = THREADS_PER_BLOCK;
+
+    int nblks = n_points / PARTICLES_PER_BLOCK + 1;
 
     cudaEvent_t start, stop;
     cudaEventCreate(&start);
