@@ -16,8 +16,8 @@ namespace py = pybind11;
 #include "boozermagneticfield.h"
 #include "regular_grid_interpolant_3d.h"
 
-#define THREADS_PER_BLOCK 32
-#define PARTICLES_PER_BLOCK 4
+#define THREADS_PER_BLOCK 64
+#define PARTICLES_PER_BLOCK 8
 
 #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
@@ -143,55 +143,60 @@ __device__ void calc_derivs(double* derivs, int deriv_id, double* quadpts_arr, d
                             double* mu, double m, double q, int nphi, int nz){
 
     __shared__ double block_interpolants[7*PARTICLES_PER_BLOCK];
-    for(int i=0; i<7; ++i){
-        block_interpolants[i*PARTICLES_PER_BLOCK + threadIdx.x] = 0.0;
+
+    if(threadIdx.x < PARTICLES_PER_BLOCK){
+        for(int i=0; i<7; ++i){
+            block_interpolants[i*PARTICLES_PER_BLOCK + threadIdx.x] = 0.0;
+        }
     }
     __syncthreads();
     interpolate(block_interpolants, quadpts_arr, index_i, index_j, index_k, r_shape, phi_shape, z_shape, nphi, nz, 7);
     __syncthreads();
 
-    double x = x_temp[0*PARTICLES_PER_BLOCK + threadIdx.x];
-    double y = x_temp[1*PARTICLES_PER_BLOCK + threadIdx.x];
-    double z = x_temp[2*PARTICLES_PER_BLOCK + threadIdx.x];
-    double v_par = x_temp[3*PARTICLES_PER_BLOCK + threadIdx.x];
+    if(threadIdx.x < PARTICLES_PER_BLOCK){
+        double x = x_temp[0*PARTICLES_PER_BLOCK + threadIdx.x];
+        double y = x_temp[1*PARTICLES_PER_BLOCK + threadIdx.x];
+        double z = x_temp[2*PARTICLES_PER_BLOCK + threadIdx.x];
+        double v_par = x_temp[3*PARTICLES_PER_BLOCK + threadIdx.x];
 
-    double B_r = block_interpolants[0*PARTICLES_PER_BLOCK + threadIdx.x];
-    double B_phi = block_interpolants[1*PARTICLES_PER_BLOCK + threadIdx.x];
-    double B_z = block_interpolants[2*PARTICLES_PER_BLOCK + threadIdx.x];
-    double GradAbsB_r = block_interpolants[3*PARTICLES_PER_BLOCK + threadIdx.x];
-    double GradAbsB_phi = block_interpolants[4*PARTICLES_PER_BLOCK + threadIdx.x];
-    double GradAbsB_z = block_interpolants[5*PARTICLES_PER_BLOCK + threadIdx.x];
+        double B_r = block_interpolants[0*PARTICLES_PER_BLOCK + threadIdx.x];
+        double B_phi = block_interpolants[1*PARTICLES_PER_BLOCK + threadIdx.x];
+        double B_z = block_interpolants[2*PARTICLES_PER_BLOCK + threadIdx.x];
+        double GradAbsB_r = block_interpolants[3*PARTICLES_PER_BLOCK + threadIdx.x];
+        double GradAbsB_phi = block_interpolants[4*PARTICLES_PER_BLOCK + threadIdx.x];
+        double GradAbsB_z = block_interpolants[5*PARTICLES_PER_BLOCK + threadIdx.x];
 
-    if(symmetry_exploited[threadIdx.x]){
-        B_r *= -1.0;
-        GradAbsB_phi *= -1.0;
-        GradAbsB_z *= -1.0;
+        if(symmetry_exploited[threadIdx.x]){
+            B_r *= -1.0;
+            GradAbsB_phi *= -1.0;
+            GradAbsB_z *= -1.0;
+        }
+
+        double phi = atan2(y, x);
+        double B_x = cos(phi) * B_r - sin(phi) * B_phi;
+        double B_y = sin(phi) * B_r + cos(phi) * B_phi;
+        double GradAbsB_x = cos(phi) * GradAbsB_r - sin(phi) * GradAbsB_phi;
+        double GradAbsB_y = sin(phi) * GradAbsB_r + cos(phi) * GradAbsB_phi;
+
+        // printf("particle %d: B = %.15e, %.15e, %.15e, GradAbsB = %.15e, %.15e, %.15e\n", threadIdx.x, B_x, B_y, B_z, GradAbsB_x, GradAbsB_y, GradAbsB_z);
+
+        double AbsB = sqrt(B_x*B_x + B_y*B_y + B_z*B_z);
+        double v_perp2 = 2*mu[threadIdx.x]*AbsB;
+        double fak1 = (v_par/AbsB);
+        double fak2 = (m/(q*pow(AbsB, 3)))*(0.5*v_perp2 + v_par*v_par);
+
+        // printf("particle %d: mu=%.15e, v_perp2 = %.15e, AbsB = %.15e, fak1 = %.15e, fak2 = %.15e\n", threadIdx.x, mu[threadIdx.x], v_perp2, AbsB, fak1, fak2);
+
+        double BcrossGradAbsB_elt = B_y*GradAbsB_z - B_z*GradAbsB_y;
+        derivs[(6*deriv_id + 0)*PARTICLES_PER_BLOCK + threadIdx.x] = fak1*B_x + fak2*BcrossGradAbsB_elt;
+        BcrossGradAbsB_elt = B_z*GradAbsB_x - B_x*GradAbsB_z;
+        derivs[(6*deriv_id + 1)*PARTICLES_PER_BLOCK + threadIdx.x] = fak1*B_y + fak2*BcrossGradAbsB_elt;
+        BcrossGradAbsB_elt = B_x*GradAbsB_y - B_y*GradAbsB_x;
+        derivs[(6*deriv_id + 2)*PARTICLES_PER_BLOCK + threadIdx.x] = fak1*B_z + fak2*BcrossGradAbsB_elt;
+        derivs[(6*deriv_id + 3)*PARTICLES_PER_BLOCK + threadIdx.x] = -mu[threadIdx.x]*(B_x*GradAbsB_x + B_y*GradAbsB_y + B_z*GradAbsB_z)/AbsB;
+        derivs[(6*deriv_id + 4)*PARTICLES_PER_BLOCK + threadIdx.x] = AbsB; // AbsB
+        derivs[(6*deriv_id + 5)*PARTICLES_PER_BLOCK + threadIdx.x] = block_interpolants[6*PARTICLES_PER_BLOCK + threadIdx.x]; // boundary dist fn
     }
-
-    double phi = atan2(y, x);
-    double B_x = cos(phi) * B_r - sin(phi) * B_phi;
-    double B_y = sin(phi) * B_r + cos(phi) * B_phi;
-    double GradAbsB_x = cos(phi) * GradAbsB_r - sin(phi) * GradAbsB_phi;
-    double GradAbsB_y = sin(phi) * GradAbsB_r + cos(phi) * GradAbsB_phi;
-
-    // printf("particle %d: B = %.15e, %.15e, %.15e, GradAbsB = %.15e, %.15e, %.15e\n", threadIdx.x, B_x, B_y, B_z, GradAbsB_x, GradAbsB_y, GradAbsB_z);
-
-    double AbsB = sqrt(B_x*B_x + B_y*B_y + B_z*B_z);
-    double v_perp2 = 2*mu[threadIdx.x]*AbsB;
-    double fak1 = (v_par/AbsB);
-    double fak2 = (m/(q*pow(AbsB, 3)))*(0.5*v_perp2 + v_par*v_par);
-
-    // printf("particle %d: mu=%.15e, v_perp2 = %.15e, AbsB = %.15e, fak1 = %.15e, fak2 = %.15e\n", threadIdx.x, mu[threadIdx.x], v_perp2, AbsB, fak1, fak2);
-
-    double BcrossGradAbsB_elt = B_y*GradAbsB_z - B_z*GradAbsB_y;
-    derivs[(6*deriv_id + 0)*PARTICLES_PER_BLOCK + threadIdx.x] = fak1*B_x + fak2*BcrossGradAbsB_elt;
-    BcrossGradAbsB_elt = B_z*GradAbsB_x - B_x*GradAbsB_z;
-    derivs[(6*deriv_id + 1)*PARTICLES_PER_BLOCK + threadIdx.x] = fak1*B_y + fak2*BcrossGradAbsB_elt;
-    BcrossGradAbsB_elt = B_x*GradAbsB_y - B_y*GradAbsB_x;
-    derivs[(6*deriv_id + 2)*PARTICLES_PER_BLOCK + threadIdx.x] = fak1*B_z + fak2*BcrossGradAbsB_elt;
-    derivs[(6*deriv_id + 3)*PARTICLES_PER_BLOCK + threadIdx.x] = -mu[threadIdx.x]*(B_x*GradAbsB_x + B_y*GradAbsB_y + B_z*GradAbsB_z)/AbsB;
-    derivs[(6*deriv_id + 4)*PARTICLES_PER_BLOCK + threadIdx.x] = AbsB; // AbsB
-    derivs[(6*deriv_id + 5)*PARTICLES_PER_BLOCK + threadIdx.x] = block_interpolants[6*PARTICLES_PER_BLOCK + threadIdx.x]; // boundary dist fn
 
     // printf("particle %d: derivative evaluated at %.15e, %.15e, %.15e, %.15e : %.15e, %.15e, %.15e, %.15e\n", 
         //    threadIdx.x, x, y, z, v_par, 
@@ -595,30 +600,44 @@ __device__ void build_state(particle_t& p, int deriv_id, double* rrange_arr, dou
 __device__ void setup_particle(double* mu, double* t, double* dt, double* dtmax, double* x_temp, bool* symmetry_exploited, int* index_i, int* index_j, int* index_k,
                             double* quad_pts, double* r_shape, double* phi_shape, double* z_shape, double* state, double* derivs,
                             double* rrange_arr, double* phirange_arr, double* zrange_arr, double vtotal, double tmax, double m, double q){
-    t[threadIdx.x] = 0.0;
-    dt[threadIdx.x] = 0.0;
-    symmetry_exploited[threadIdx.x] = false;
-    build_state(x_temp, 0, symmetry_exploited, index_i, index_j, index_k,
-                            r_shape, phi_shape, z_shape, state, derivs, dt,
-                            rrange_arr, phirange_arr, zrange_arr);
-    // dummy call to get norm B
-    mu[threadIdx.x] = -1.0; // initialize mu
+
+    if(threadIdx.x < PARTICLES_PER_BLOCK){
+        t[threadIdx.x] = 0.0;
+        dt[threadIdx.x] = 0.0;
+        symmetry_exploited[threadIdx.x] = false;
+        build_state(x_temp, 0, symmetry_exploited, index_i, index_j, index_k,
+                                r_shape, phi_shape, z_shape, state, derivs, dt,
+                                rrange_arr, phirange_arr, zrange_arr);
+        // dummy call to get norm B
+        mu[threadIdx.x] = -1.0; // initialize mu
+    } else {
+        index_i[threadIdx.x] = 0;
+        index_j[threadIdx.x] = 0;
+        index_k[threadIdx.x] = 0;
+    }
+
+
     int nphi = (phirange_arr[2]-1)/3;
     int nz = (zrange_arr[2]-1)/3;
+
+    __syncthreads();
     calc_derivs(derivs, 0, quad_pts, x_temp, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, mu, m, q, nphi, nz);
+    __syncthreads();
 
-    double v_par = state[3*PARTICLES_PER_BLOCK + threadIdx.x];
-    double v_perp2 = vtotal*vtotal - v_par*v_par;
-    double modB = derivs[4*PARTICLES_PER_BLOCK + threadIdx.x];
-    double denom = 1 / (2*modB);
-    mu[threadIdx.x] = v_perp2 * denom;
+    if(threadIdx.x < PARTICLES_PER_BLOCK){
+        double v_par = state[3*PARTICLES_PER_BLOCK + threadIdx.x];
+        double v_perp2 = vtotal*vtotal - v_par*v_par;
+        double modB = derivs[4*PARTICLES_PER_BLOCK + threadIdx.x];
+        double denom = 1 / (2*modB);
+        mu[threadIdx.x] = v_perp2 * denom;
 
-    double x = state[0*PARTICLES_PER_BLOCK + threadIdx.x];
-    double y = state[1*PARTICLES_PER_BLOCK + threadIdx.x];
-    // can at most do quarter of a revolution per step
-    double r = sqrt(x*x + y*y);
-    dtmax[threadIdx.x] = r*0.5*M_PI/vtotal;
-    dt[threadIdx.x] = 1e-3*dtmax[threadIdx.x];
+        double x = state[0*PARTICLES_PER_BLOCK + threadIdx.x];
+        double y = state[1*PARTICLES_PER_BLOCK + threadIdx.x];
+        // can at most do quarter of a revolution per step
+        double r = sqrt(x*x + y*y);
+        dtmax[threadIdx.x] = r*0.5*M_PI/vtotal;
+        dt[threadIdx.x] = 1e-3*dtmax[threadIdx.x];
+    }
     // printf("initial dt = %.15e, r = %.15e, v_total = %.15e\n", dt[threadIdx.x], r, vtotal);
 
 }
@@ -1206,13 +1225,28 @@ extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_p
 
 
 __global__ void test_gpu_derivs_kernel(double* quad_pts, double* srange, double* trange, double* zrange, double* loc, double* vpar, double vtotal, double* out, double m, double q, int n_points){
-    int idx = threadIdx.x + blockIdx.x*blockDim.x;
-    if(idx < n_points){
-        double* loc_arr = loc + 3*idx;
-        double* out_arr  =  out + 4*idx;
-        double vpar_val = vpar[idx];
+    int idx = threadIdx.x + blockIdx.x*PARTICLES_PER_BLOCK;   
+    double* loc_arr = loc + 3*idx;
+    double* out_arr  =  out + 4*idx;
 
-        particle_t p;
+    __shared__ double x_temp[4 * PARTICLES_PER_BLOCK];
+    __shared__ double derivs[42 * PARTICLES_PER_BLOCK];
+    __shared__ double dt[PARTICLES_PER_BLOCK];
+    __shared__ bool symmetry_exploited[PARTICLES_PER_BLOCK];
+    __shared__ int index_i[PARTICLES_PER_BLOCK];
+    __shared__ int index_j[PARTICLES_PER_BLOCK];
+    __shared__ int index_k[PARTICLES_PER_BLOCK];
+    __shared__ double r_shape[4 * PARTICLES_PER_BLOCK];
+    __shared__ double phi_shape[4 * PARTICLES_PER_BLOCK];
+    __shared__ double z_shape[4 * PARTICLES_PER_BLOCK];
+    __shared__ double mu[PARTICLES_PER_BLOCK];
+    __shared__ double t[PARTICLES_PER_BLOCK];
+    __shared__ double dtmax[PARTICLES_PER_BLOCK];
+    __shared__ double state[4 * PARTICLES_PER_BLOCK];
+    particle_t p;
+
+    if(threadIdx.x < PARTICLES_PER_BLOCK){
+        double vpar_val = vpar[idx];
         double r = loc_arr[0];
         double phi = loc_arr[1];
         double z = loc_arr[2];
@@ -1225,53 +1259,23 @@ __global__ void test_gpu_derivs_kernel(double* quad_pts, double* srange, double*
         p.v_perp = sqrt(vtotal*vtotal -  vpar_val*vpar_val);
         // printf("v_perp = %.15e, v_par = %.15e, v_total = %.15e\n", p.v_perp, p.state[3], p.v_total);
 
-        __shared__ double x_temp[4 * PARTICLES_PER_BLOCK];
-        __shared__ double derivs[42 * PARTICLES_PER_BLOCK];
-        __shared__ double dt[PARTICLES_PER_BLOCK];
-        __shared__ bool symmetry_exploited[PARTICLES_PER_BLOCK];
-        __shared__ int index_i[PARTICLES_PER_BLOCK];
-        __shared__ int index_j[PARTICLES_PER_BLOCK];
-        __shared__ int index_k[PARTICLES_PER_BLOCK];
-        __shared__ double r_shape[4 * PARTICLES_PER_BLOCK];
-        __shared__ double phi_shape[4 * PARTICLES_PER_BLOCK];
-        __shared__ double z_shape[4 * PARTICLES_PER_BLOCK];
-        __shared__ double mu[PARTICLES_PER_BLOCK];
-        __shared__ double t[PARTICLES_PER_BLOCK];
-        __shared__ double dtmax[PARTICLES_PER_BLOCK];
-        __shared__ double state[4 * PARTICLES_PER_BLOCK];
+
         for(int i=0; i<4; ++i){
             state[i*PARTICLES_PER_BLOCK + threadIdx.x] = p.state[i];
         }
+    }
+    __syncthreads();
 
-        setup_particle(mu, t, dt, dtmax, x_temp, symmetry_exploited, index_i, index_j, index_k,
-                            quad_pts, r_shape, phi_shape, z_shape, state, derivs,
-                            srange, trange, zrange, p.v_total, 1e-2, m, q);
+    setup_particle(mu, t, dt, dtmax, x_temp, symmetry_exploited, index_i, index_j, index_k,
+                        quad_pts, r_shape, phi_shape, z_shape, state, derivs,
+                        srange, trange, zrange, p.v_total, 1e-2, m, q);
+    __syncthreads();
+    int nphi = (trange[2]-1)/3;
+    int nz = (zrange[2]-1)/3;
+    calc_derivs(derivs, 0, quad_pts, x_temp, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, mu, m, q, nphi, nz);
+    __syncthreads();
 
-        // setup_particle(p, srange, trange, zrange, quad_pts, 1e-2, m, q);
-
-
-
-        // for(int i=0; i<4; ++i){
-        //     x_temp[i*PARTICLES_PER_BLOCK + threadIdx.x] = p.x_temp[i];
-        // }
-        // dt[threadIdx.x] = p.dt;
-        // symmetry_exploited[threadIdx.x] = p.symmetry_exploited;
-        // index_i[threadIdx.x] = p.i;
-        // index_j[threadIdx.x] = p.j;
-        // index_k[threadIdx.x] = p.k;
-        // for(int i=0; i<4; ++i){
-        //     r_shape[i*PARTICLES_PER_BLOCK + threadIdx.x] = p.r_shape[i];
-        //     phi_shape[i*PARTICLES_PER_BLOCK + threadIdx.x] = p.phi_shape[i];
-        //     z_shape[i*PARTICLES_PER_BLOCK + threadIdx.x] = p.z_shape[i];
-        // }
-        // mu[threadIdx.x] = p.mu;
-
-        // printf("mu value stored in shared memory: %.15e\n", mu[threadIdx.x]);
-
-        int nphi = (trange[2]-1)/3;
-        int nz = (zrange[2]-1)/3;
-        calc_derivs(derivs, 0, quad_pts, x_temp, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, mu, m, q, nphi, nz);
-
+    if(threadIdx.x < PARTICLES_PER_BLOCK){
         // copy back
         for(int i=0; i<4; ++i){
             p.derivs[i] = derivs[i*PARTICLES_PER_BLOCK + threadIdx.x];
@@ -1335,8 +1339,9 @@ extern "C" py::array_t<double> test_derivatives(py::array_t<double> quad_pts, py
 
 
 
-    int nthreads = PARTICLES_PER_BLOCK;
-    int nblks = n_points / nthreads + 1;
+    int nthreads = THREADS_PER_BLOCK;
+
+    int nblks = n_points / PARTICLES_PER_BLOCK + 1;
 
     cudaEvent_t start, stop;
     cudaEventCreate(&start);
