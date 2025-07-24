@@ -117,26 +117,46 @@ __host__ __device__ void shape(double x, double* shape){
 __device__ void interpolate(double*  out, const double* __restrict__ data, const int* index_i, const int* __restrict__ index_j, const int* __restrict__ index_k, 
     const double* __restrict__ r_shape, const double* __restrict__ phi_shape, const double* __restrict__ z_shape, int nphi, int nz, int n){
 
-    for(int idx = threadIdx.x; idx< PARTICLES_PER_BLOCK*64*n; idx += THREADS_PER_BLOCK){
+    for(int idx=threadIdx.x; idx<PARTICLES_PER_BLOCK*n; idx+= THREADS_PER_BLOCK){
         int zz = idx % n;
-        int temp = idx / n;
-
-        int kk = temp % 4; // zeta grid
-        temp /= 4;
-        int jj = temp % 4; // theta grid
-        temp /= 4;
-        int ii = temp % 4; // s grid
-        temp /= 4;
-        int particle_id = temp; // particle id
-
+        int particle_id = idx / n;
         int i = index_i[particle_id];
         int j = index_j[particle_id];
         int k = index_k[particle_id];
+        double local_val = 0.0;
+        for(int ii=0; ii<4; ++ii){
+            for(int jj=0; jj<4; ++jj){
+                for(int kk=0; kk<4; ++kk){
+                    int row_idx = 64*(i*nphi*nz + j*nz + k) + 16*ii + 4*jj + kk;
+                    double shape_val = r_shape[ii*PARTICLES_PER_BLOCK + particle_id] * phi_shape[jj*PARTICLES_PER_BLOCK + particle_id] * z_shape[kk*PARTICLES_PER_BLOCK + particle_id];
+                    local_val += data[n*row_idx + zz] * shape_val;
 
-        int row_idx = 64*(i*nphi*nz + j*nz + k) + 16*ii + 4*jj + kk;
-        double shape_val = r_shape[ii*PARTICLES_PER_BLOCK + particle_id] * phi_shape[jj*PARTICLES_PER_BLOCK + particle_id] * z_shape[kk*PARTICLES_PER_BLOCK + particle_id];
-        atomicAdd(&out[PARTICLES_PER_BLOCK*zz + particle_id], data[n*row_idx + zz] * shape_val);
+                }
+            }
+        }
+        out[PARTICLES_PER_BLOCK*zz + particle_id] = local_val;
+
     }
+    // for(int idx = threadIdx.x; idx< PARTICLES_PER_BLOCK*64*n; idx += THREADS_PER_BLOCK){
+    //     int zz = idx % n;
+    //     int temp = idx / n;
+
+    //     int kk = temp % 4; // zeta grid
+    //     temp /= 4;
+    //     int jj = temp % 4; // theta grid
+    //     temp /= 4;
+    //     int ii = temp % 4; // s grid
+    //     temp /= 4;
+    //     int particle_id = temp; // particle id
+
+    //     int i = index_i[particle_id];
+    //     int j = index_j[particle_id];
+    //     int k = index_k[particle_id];
+
+    //     int row_idx = 64*(i*nphi*nz + j*nz + k) + 16*ii + 4*jj + kk;
+    //     double shape_val = r_shape[ii*PARTICLES_PER_BLOCK + particle_id] * phi_shape[jj*PARTICLES_PER_BLOCK + particle_id] * z_shape[kk*PARTICLES_PER_BLOCK + particle_id];
+    //     atomicAdd(&out[PARTICLES_PER_BLOCK*zz + particle_id], data[n*row_idx + zz] * shape_val);
+    // }
 }
 
 __device__ void calc_derivs(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited, int* index_i, int* index_j, int* index_k, double* r_shape, double* phi_shape, double* z_shape,
@@ -610,10 +630,6 @@ __device__ void setup_particle(double* mu, double* t, double* dt, double* dtmax,
                                 rrange_arr, phirange_arr, zrange_arr);
         // dummy call to get norm B
         mu[threadIdx.x] = -1.0; // initialize mu
-    } else {
-        index_i[threadIdx.x] = 0;
-        index_j[threadIdx.x] = 0;
-        index_k[threadIdx.x] = 0;
     }
 
 
@@ -1269,9 +1285,10 @@ __global__ void test_gpu_derivs_kernel(double* quad_pts, double* srange, double*
     setup_particle(mu, t, dt, dtmax, x_temp, symmetry_exploited, index_i, index_j, index_k,
                         quad_pts, r_shape, phi_shape, z_shape, state, derivs,
                         srange, trange, zrange, p.v_total, 1e-2, m, q);
-    __syncthreads();
     int nphi = (trange[2]-1)/3;
     int nz = (zrange[2]-1)/3;
+    __syncthreads();
+
     calc_derivs(derivs, 0, quad_pts, x_temp, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, mu, m, q, nphi, nz);
     __syncthreads();
 
