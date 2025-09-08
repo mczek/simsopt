@@ -76,6 +76,9 @@ class GuidingCenterVacuumRHS {
             dydt[1] = fak1*B(0, 1) + fak2*BcrossGradAbsB[1];
             dydt[2] = fak1*B(0, 2) + fak2*BcrossGradAbsB[2];
             dydt[3] = -mu*(B(0, 0)*GradAbsB(0, 0) + B(0, 1)*GradAbsB(0, 1) + B(0, 2)*GradAbsB(0, 2))/AbsB;
+            // fmt::print("GuidingCenterVacuumRHS: pos=({:.5f}, {:.5f}, {:.5f}, {:.5f})\n", x, y, z, v_par);
+            // fmt::print("GuidingCenterVacuumRHS: B=({:.5f}, {:.5f}, {:.5f}), GradAbsB=({:.5f}, {:.5f}, {:.5f})\n", B(0, 0), B(0, 1), B(0, 2), GradAbsB(0,0), GradAbsB(0,1), GradAbsB(0,2));
+            // fmt::print("GuidingCenterVacuumRHS: dydt = ({:.5f}, {:.5f}, {:.5f}, {:.5f})\n", dydt[0], dydt[1], dydt[2], dydt[3]);
         }
 };
 

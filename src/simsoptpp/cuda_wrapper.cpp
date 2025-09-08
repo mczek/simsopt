@@ -19,7 +19,6 @@ using std::vector;
 
 namespace py = pybind11;
 
-extern "C" void addKernelWrapper(int *c, const int *a, const int *b, int size);
 
 
 extern "C" vector<bool> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
@@ -34,13 +33,3 @@ extern "C" py::array_t<double> test_derivatives(py::array_t<double> quad_pts, py
 extern "C" vector<double> test_timestep(py::array_t<double> quad_pts, py::array_t<double> srange,
         py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
         double tol, double psi0, int nparticles);
-// PYBIND11_MODULE(cuda_module, m) {
-//     m.def("add_kernel", [](py::array_t<int> a, py::array_t<int> b){
-//         auto a_buf = a.request(), b_buf = b.request();
-//         int size = a_buf.size;
-//         py::array_t<int> c(size);
-//         auto c_buf = c.request();
-//         addKernelWrapper((int *)c_buf.ptr, (const int *)a_buf.ptr, (const int *)b_buf.ptr, size);
-//         return c;
-//     });
-// }

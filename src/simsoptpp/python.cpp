@@ -37,10 +37,6 @@ void init_tracing(py::module_ &);
 void init_distance(py::module_ &);
 
 
-extern "C" void addKernelWrapper(int *c, const int *a, const int *b, int size);
-// extern "C" void gpu_tracing(shared_ptr<MagneticField<T>> field, array<double, 3> xyz_init,
-//         double m, double q, double vtotal, double vtang, double tmax, double tol, bool vacuum,
-//         vector<double> phis, vector<shared_ptr<StoppingCriterion>> stopping_criteria);
 
 
 PYBIND11_MODULE(simsoptpp, m) {
@@ -169,16 +165,6 @@ PYBIND11_MODULE(simsoptpp, m) {
             return C;
         });
     
-    m.def("add_kernel", [](py::array_t<int> a, py::array_t<int> b){
-        auto a_buf = a.request(), b_buf = b.request();
-        int size = a_buf.size;
-
-        int* c = new int[size];
-        addKernelWrapper(c, (const int *)a_buf.ptr, (const int *)b_buf.ptr, size);
-        py::array_t<int> result(size, c);
-        delete[] c;
-        return result;
-    });
 
     // m.def("gpu_tracing", &gpu_tracing,
     //     py::arg("field"),
