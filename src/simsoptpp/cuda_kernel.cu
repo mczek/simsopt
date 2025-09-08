@@ -12,10 +12,6 @@ using std::vector;
 namespace py = pybind11;
 #include <fmt/core.h>
 
-#include "magneticfield.h"
-#include "boozermagneticfield.h"
-#include "regular_grid_interpolant_3d.h"
-
 #define THREADS_PER_BLOCK 64
 #define PARTICLES_PER_BLOCK 8
 
@@ -114,8 +110,8 @@ __host__ __device__ void shape(double x, double* shape){
     return;         
 }
 
-__device__ void interpolate(double*  out, const double* __restrict__ data, const int* index_i, const int* __restrict__ index_j, const int* __restrict__ index_k, 
-    const double* __restrict__ r_shape, const double* __restrict__ phi_shape, const double* __restrict__ z_shape, int nphi, int nz, int n, int nparticles_blk){
+template <int n> __device__ void interpolate(double*  out, const double* __restrict__ data, const int* index_i, const int* __restrict__ index_j, const int* __restrict__ index_k, 
+    const double* __restrict__ r_shape, const double* __restrict__ phi_shape, const double* __restrict__ z_shape, int nphi, int nz, int nparticles_blk){
 
     for(int idx=threadIdx.x; idx<nparticles_blk*n; idx+= THREADS_PER_BLOCK){
         int zz = idx % n;
@@ -175,7 +171,7 @@ __device__ void calc_derivs(double* derivs, int deriv_id, double* quadpts_arr, d
         // printf("thread %d, r_shape = %.15e, %.15e, %.15e, %.15e\n", threadIdx.x, r_shape[0*PARTICLES_PER_BLOCK + threadIdx.x], r_shape[1*PARTICLES_PER_BLOCK + threadIdx.x], r_shape[2*PARTICLES_PER_BLOCK + threadIdx.x], r_shape[3*PARTICLES_PER_BLOCK + threadIdx.x]);
     }
     __syncthreads();
-    interpolate(block_interpolants, quadpts_arr, index_i, index_j, index_k, r_shape, phi_shape, z_shape, nphi, nz, 7, nparticles_blk);
+    interpolate<7>(block_interpolants, quadpts_arr, index_i, index_j, index_k, r_shape, phi_shape, z_shape, nphi, nz, nparticles_blk);
     __syncthreads();
 
     // printf("finished interpolate on thread %d\n", threadIdx.x);
@@ -289,7 +285,7 @@ __device__ void calc_derivs(particle_t& p, double* out, double* rrange_arr, doub
     __syncthreads();
     int nphi = (phirange_arr[2]-1)/3;
     int nz = (zrange_arr[2]-1)/3;
-    interpolate(block_interpolants, quadpts_arr, index_i, index_j, index_k, r_shape, phi_shape, z_shape, nphi, nz, 7, PARTICLES_PER_BLOCK);
+    interpolate<7>(block_interpolants, quadpts_arr, index_i, index_j, index_k, r_shape, phi_shape, z_shape, nphi, nz, PARTICLES_PER_BLOCK);
 
     // double* loc = loc_shared + 3* block_part_id;
     // double interpolants[7] = {0.0};
@@ -1221,7 +1217,7 @@ __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* srange, 
         int nz = (zrange[2]-1)/3;
 
         __syncthreads();
-        interpolate(block_interpolants, quad_pts, index_i, index_j, index_k, r_shape, phi_shape, z_shape, nphi, nz, 7, nparticles_blk);
+        interpolate<7>(block_interpolants, quad_pts, index_i, index_j, index_k, r_shape, phi_shape, z_shape, nphi, nz, nparticles_blk);
         __syncthreads();
         // printf("returned from interpolate for particle %d\n", threadIdx.x);
         // interpolate(p, quad_pts, out_arr, srange, trange, zrange, n);
