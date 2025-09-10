@@ -193,6 +193,43 @@ template <> __device__ void calc_derivs<RHS::GC_BoozerVacuum>(double* derivs, in
                                     int* index_i, int* index_j, int* index_k, double* s_shape, double* t_shape, double* z_shape,
                                     double* mu, double m, double q, int nt, int nz, int nparticles_blk, double psi0){};
 
+
+template<RHS id, typename... Args>
+__device__ void map_to_grid(double * xyz, bool* symmetry_exploited, Args... args);                                    
+
+template <>
+__device__ void map_to_grid<RHS::GC_CartesianVacuum>(double* x_temp, bool* symmetry_exploited, double* phirange_arr){
+    double x = x_temp[0*PARTICLES_PER_BLOCK + threadIdx.x];
+    double y = x_temp[1*PARTICLES_PER_BLOCK + threadIdx.x];
+    double z = x_temp[2*PARTICLES_PER_BLOCK + threadIdx.x];
+    double v_par = x_temp[3*PARTICLES_PER_BLOCK + threadIdx.x];
+
+
+    // convert to cylindrical coordinates for interpolation
+    double r = sqrt(x*x + y*y);
+    double phi = atan2(y, x);
+
+    // restrict phi to [0, 2pi / nfp]
+    double period = phirange_arr[1];
+    phi = fmod(phi, period);
+    phi += period*(phi < 0);
+
+    // exploit stellarator symmetry
+    symmetry_exploited[threadIdx.x] = z < 0;
+    if(symmetry_exploited[threadIdx.x]){
+        z = -z;
+        phi = 2*M_PI - phi;
+        phi = fmod(phi, period);
+        phi += period*(phi < 0);
+    }
+
+   x_temp[0*PARTICLES_PER_BLOCK + threadIdx.x] = r;
+   x_temp[1*PARTICLES_PER_BLOCK + threadIdx.x] = phi;
+   x_temp[2*PARTICLES_PER_BLOCK + threadIdx.x] = z;
+} 
+
+
+
 __device__ void build_state(double* x_temp, int deriv_id, bool* symmetry_exploited, int* index_i, int* index_j, int* index_k,
                             double* r_shape, double* phi_shape, double* z_shape, double* state, double* derivs, double* dt,
                             double* rrange_arr, double* phirange_arr, double* zrange_arr){
@@ -254,29 +291,34 @@ __device__ void build_state(double* x_temp, int deriv_id, bool* symmetry_exploit
         }
     } 
 
-    double x = x_temp[0*PARTICLES_PER_BLOCK + threadIdx.x];
-    double y = x_temp[1*PARTICLES_PER_BLOCK + threadIdx.x];
+    // double x = x_temp[0*PARTICLES_PER_BLOCK + threadIdx.x];
+    // double y = x_temp[1*PARTICLES_PER_BLOCK + threadIdx.x];
+    // double z = x_temp[2*PARTICLES_PER_BLOCK + threadIdx.x];
+    // double v_par = x_temp[3*PARTICLES_PER_BLOCK + threadIdx.x];
+
+
+    // // convert to cylindrical coordinates for interpolation
+    // double r = sqrt(x*x + y*y);
+    // double phi = atan2(y, x);
+
+    // // restrict phi to [0, 2pi / nfp]
+    // double period = phirange_arr[1];
+    // phi = fmod(phi, period);
+    // phi += period*(phi < 0);
+
+    // // exploit stellarator symmetry
+    // symmetry_exploited[threadIdx.x] = z < 0;
+    // if(symmetry_exploited[threadIdx.x]){
+    //     z = -z;
+    //     phi = 2*M_PI - phi;
+    //     phi = fmod(phi, period);
+    //     phi += period*(phi < 0);
+    // }
+
+    map_to_grid<RHS::GC_CartesianVacuum>(x_temp, symmetry_exploited, phirange_arr);
+    double r = x_temp[0*PARTICLES_PER_BLOCK + threadIdx.x];
+    double phi = x_temp[1*PARTICLES_PER_BLOCK + threadIdx.x];
     double z = x_temp[2*PARTICLES_PER_BLOCK + threadIdx.x];
-    double v_par = x_temp[3*PARTICLES_PER_BLOCK + threadIdx.x];
-
-
-    // convert to cylindrical coordinates for interpolation
-    double r = sqrt(x*x + y*y);
-    double phi = atan2(y, x);
-
-    // restrict phi to [0, 2pi / nfp]
-    double period = phirange_arr[1];
-    phi = fmod(phi, period);
-    phi += period*(phi < 0);
-
-    // exploit stellarator symmetry
-    symmetry_exploited[threadIdx.x] = z < 0;
-    if(symmetry_exploited[threadIdx.x]){
-        z = -z;
-        phi = 2*M_PI - phi;
-        phi = fmod(phi, period);
-        phi += period*(phi < 0);
-    }
 
     /*
     * index into the grid and calculate weights
