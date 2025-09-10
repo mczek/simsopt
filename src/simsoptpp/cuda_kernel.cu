@@ -27,7 +27,7 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
 
 // enum used for templating
 // https://stackoverflow.com/questions/9116267/how-can-i-use-an-enumeration-as-a-template-parameter
-enum RHS_ID {GC_CartesianVacuum};
+enum class RHS {GC_CartesianVacuum, GC_BoozerVacuum};
 
 
 // Particle Data Structure
@@ -119,17 +119,19 @@ template <int n> __device__ void interpolate(double*  out, const double* __restr
     }
 }
 
-template<RHS_ID id> void calc_derivs(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited, 
-                                    int* index_i, int* index_j, int* index_k, double* r_shape, double* phi_shape, double* z_shape,
-                                    double* mu, double m, double q, int nphi, int nz, int nparticles_blk){};
-
 // calc_derivs computes the derivatives at points stored for which the corresponding
 // i,j,k indices and shape functions have been precomputed
 // the results are stored in the appropriate region of derivs
 // nparticles_blk stores the number of actual particles in the block
 //
 // this function is templated across rhs options
-template <> __device__ void calc_derivs<GC_CartesianVacuum>(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited, 
+template<RHS id, typename... Args>  __device__ void calc_derivs(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited, 
+                                    int* index_i, int* index_j, int* index_k, double* r_shape, double* phi_shape, double* z_shape,
+                                    double* mu, double m, double q, int nphi, int nz, int nparticles_blk, Args... args){};
+
+
+// calc_derivs implementation for guiding center cartesian vacuum tracing
+template <> __device__ void calc_derivs<RHS::GC_CartesianVacuum>(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited, 
                                     int* index_i, int* index_j, int* index_k, double* r_shape, double* phi_shape, double* z_shape,
                                     double* mu, double m, double q, int nphi, int nz, int nparticles_blk){
     __shared__ double block_interpolants[7*PARTICLES_PER_BLOCK];
@@ -325,7 +327,7 @@ __device__ void setup_particle(double* mu, double* t, double* dt, double* dtmax,
     int nz = (zrange_arr[2]-1)/3;
 
     __syncthreads();
-    calc_derivs<GC_CartesianVacuum>(derivs, 0, quad_pts, x_temp, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, mu, m, q, nphi, nz, nparticles_blk);
+    calc_derivs<RHS::GC_CartesianVacuum>(derivs, 0, quad_pts, x_temp, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, mu, m, q, nphi, nz, nparticles_blk);
     __syncthreads();
 
     if(threadIdx.x < nparticles_blk){
@@ -451,7 +453,7 @@ __global__ void particle_trace_kernel(particle_t* particles, double* srange_arr,
 
             // ensure that all threads have updated x_temp before calculating derivatives, where a data race would occur
             __syncthreads();
-            calc_derivs<GC_CartesianVacuum>(derivs, k, quadpts_arr, x_temp, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, mu, m, q,
+            calc_derivs<RHS::GC_CartesianVacuum>(derivs, k, quadpts_arr, x_temp, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, mu, m, q,
                         nphi, nz, nparticles_blk);
 
             // ensure all particles have derivative calculations before accepting/rejecting timestep
@@ -842,7 +844,7 @@ __global__ void test_gpu_derivs_kernel(double* quad_pts, double* srange, double*
     int nz = (zrange[2]-1)/3;
     __syncthreads();
 
-    calc_derivs<GC_CartesianVacuum>(derivs, 0, quad_pts, x_temp, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, mu, m, q, nphi, nz, nparticles_blk);
+    calc_derivs<RHS::GC_CartesianVacuum>(derivs, 0, quad_pts, x_temp, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, mu, m, q, nphi, nz, nparticles_blk);
     __syncthreads();
 
     if(is_valid){
@@ -987,7 +989,7 @@ __global__ void test_gpu_timestep_kernel(particle_t* particles, double* srange_a
 
             // ensure that all threads have updated x_temp before calculating derivatives, where a data race would occur
             __syncthreads();
-            calc_derivs<GC_CartesianVacuum>(derivs, k, quadpts_arr, x_temp, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, mu, m, q,
+            calc_derivs<RHS::GC_CartesianVacuum>(derivs, k, quadpts_arr, x_temp, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, mu, m, q,
                         nphi, nz, nparticles_blk);
 
             // ensure all particles have derivative calculations before accepting/rejecting timestep
