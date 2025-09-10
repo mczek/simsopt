@@ -604,7 +604,8 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
 }
 
 
-__global__ void test_gpu_interpolation_kernel(double* quad_pts, double* srange, double* trange, double* zrange, double* loc, double* out, int n, int n_points){
+template <int n>
+__global__ void test_gpu_interpolation_kernel(double* quad_pts, double* srange, double* trange, double* zrange, double* loc, double* out, int n_points){
     int idx = threadIdx.x + blockIdx.x*PARTICLES_PER_BLOCK;
     particle_t p;
     __shared__ double x_temp[4 * PARTICLES_PER_BLOCK];
@@ -657,7 +658,7 @@ __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* srange, 
         int nz = (zrange[2]-1)/3;
 
         __syncthreads();
-        interpolate<7>(block_interpolants, quad_pts, index_i, index_j, index_k, r_shape, phi_shape, z_shape, nphi, nz, nparticles_blk);
+        interpolate<n>(block_interpolants, quad_pts, index_i, index_j, index_k, r_shape, phi_shape, z_shape, nphi, nz, nparticles_blk);
         __syncthreads();
         // printf("returned from interpolate for particle %d\n", threadIdx.x);
         // interpolate(p, quad_pts, out_arr, srange, trange, zrange, n);
@@ -735,7 +736,7 @@ extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_p
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
     cudaEventRecord(start);
-    test_gpu_interpolation_kernel<<<nblks, nthreads>>>(quadpts_d, srange_d, trange_d, zrange_d, loc_d, out_d, n, n_points);
+    test_gpu_interpolation_kernel<7><<<nblks, nthreads>>>(quadpts_d, srange_d, trange_d, zrange_d, loc_d, out_d, n_points);
     
     double out[n*n_points];
     gpuErrchk( cudaMemcpy(&out, out_d, n*n_points * sizeof(double), cudaMemcpyDeviceToHost) );
