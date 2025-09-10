@@ -16,7 +16,6 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
         py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
         double tmax, double tol, int nparticles);
 
-extern "C" py::array_t<double> test_interpolation(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, int n);
 extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, int n, int n_points);
 
 extern "C" py::array_t<double> test_derivatives(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, py::array_t<double> vpar, double v_total, double m, double q, int n_points);
@@ -88,15 +87,6 @@ void init_tracing(py::module_ &m){
         py::arg("tmax"),
         py::arg("tol"),
         py::arg("nparticles")
-        );
-
-    m.def("test_interpolation", &test_interpolation,
-        py::arg("quad_pts"),
-        py::arg("srange"),
-        py::arg("trange"),
-        py::arg("zrange"),
-        py::arg("loc"),
-        py::arg("n")
         );
 
     m.def("test_gpu_interpolation", &test_gpu_interpolation,
