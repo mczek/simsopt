@@ -187,6 +187,12 @@ template <> __device__ void calc_derivs<RHS::GC_CartesianVacuum>(double* derivs,
     }
 }
 
+
+// calc_derivs implementation for guiding center cartesian vacuum tracing
+template <> __device__ void calc_derivs<RHS::GC_BoozerVacuum>(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited, 
+                                    int* index_i, int* index_j, int* index_k, double* s_shape, double* t_shape, double* z_shape,
+                                    double* mu, double m, double q, int nt, int nz, int nparticles_blk, double psi0){};
+
 __device__ void build_state(double* x_temp, int deriv_id, bool* symmetry_exploited, int* index_i, int* index_j, int* index_k,
                             double* r_shape, double* phi_shape, double* z_shape, double* state, double* derivs, double* dt,
                             double* rrange_arr, double* phirange_arr, double* zrange_arr){
@@ -597,54 +603,6 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
     return particle_output;
 }
 
-extern "C" py::array_t<double> test_interpolation(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, int n){
-    py::buffer_info quadpts_buf = quad_pts.request();
-    double* quadpts_arr = static_cast<double*>(quadpts_buf.ptr);
-
-    py::buffer_info s_buf = srange.request();
-    double* srange_arr = static_cast<double*>(s_buf.ptr);
-
-    py::buffer_info t_buf = trange.request();
-    double* trange_arr = static_cast<double*>(t_buf.ptr);
-
-    py::buffer_info z_buf = zrange.request();
-    double* zrange_arr = static_cast<double*>(z_buf.ptr);
-
-    py::buffer_info loc_buf = loc.request();
-    double* loc_arr = static_cast<double*>(loc_buf.ptr);
-
-    double out[n];
-
-    double t = loc_arr[1];
-    double z = loc_arr[2];
-    // we want to exploit periodicity in the B-field, but leave sine(theta) unchanged
-    t = fmod(t, 2*M_PI);
-    t += 2*M_PI*(t < 0);
-
-    // we can modify z because it's only used to access the B-field location
-    double period = zrange_arr[1];
-    z = fmod(z, period);
-    z += period*(z < 0);
-
-    
-    // exploit stellarator symmetry
-    bool symmetry_exploited = t > M_PI;
-    if(symmetry_exploited){
-        z = period - z;
-        t = 2*M_PI - t;
-    }
-    loc_arr[1] = t;
-    loc_arr[2] = z;
-
-    if(symmetry_exploited){
-        out[2] *= -1.0;
-        out[3] *= -1.0;
-    }
-
-    auto result = py::array_t<double>(n, out);
-    return result;
-
-}
 
 __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* srange, double* trange, double* zrange, double* loc, double* out, int n, int n_points){
     int idx = threadIdx.x + blockIdx.x*PARTICLES_PER_BLOCK;
