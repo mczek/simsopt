@@ -97,7 +97,7 @@ def test_interpolant_bfield(field, sc_particle, nfp, n_metagrid_pts, n_test_pts)
     r_range, phi_range, z_range, quad_info = setup_interpolant(field, sc_particle, nfp, n_metagrid_pts)
 
     # Calculate interpolation
-    new_interpolation = sopp.test_gpu_interpolation(quad_info, r_range, phi_range, z_range, rphiz, 7, rphiz.shape[0])
+    new_interpolation = sopp.test_gpu_interpolation(quad_info, r_range, phi_range, z_range, rphiz, "cartesian", rphiz.shape[0])
     new_interpolation = np.reshape(new_interpolation, (rphiz.shape[0], 7))
 
     print(np.abs(simsopt_interpolation - new_interpolation) / simsopt_interpolation)

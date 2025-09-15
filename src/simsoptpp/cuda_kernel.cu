@@ -727,7 +727,7 @@ __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* srange, 
 
 
 
-extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, int n, int n_points){
+extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, std::string coordinates, int n_points){
     py::buffer_info quadpts_buf = quad_pts.request();
     double* quadpts_arr = static_cast<double*>(quadpts_buf.ptr);
 
@@ -764,6 +764,10 @@ extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_p
     cudaMalloc((void**)&loc_d, loc.size() * sizeof(double));
     cudaMemcpy(loc_d, loc_arr, loc.size() * sizeof(double), cudaMemcpyHostToDevice);
 
+    int n;
+    if(coordinates == "cartesian"){
+        n = 7;
+    }
 
     double* out_d;
     cudaMalloc((void**)&out_d, n*n_points * sizeof(double));
@@ -778,8 +782,10 @@ extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_p
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
     cudaEventRecord(start);
-    test_gpu_interpolation_kernel<7><<<nblks, nthreads>>>(quadpts_d, srange_d, trange_d, zrange_d, loc_d, out_d, n_points);
-    
+
+    if(coordinates == "cartesian"){
+        test_gpu_interpolation_kernel<7><<<nblks, nthreads>>>(quadpts_d, srange_d, trange_d, zrange_d, loc_d, out_d, n_points);
+    }
     double out[n*n_points];
     gpuErrchk( cudaMemcpy(&out, out_d, n*n_points * sizeof(double), cudaMemcpyDeviceToHost) );
     cudaEventRecord(stop);
