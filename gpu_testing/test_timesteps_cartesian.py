@@ -41,7 +41,7 @@ def test_derivs(field, sc_praticle, nfp, n_metagrid_pts, n_test_pts, verify=True
         # psi0 =field.psi0
 
         print("calculating new derivatives")
-        new_derivs = sopp.test_derivatives(quad_info, r_range, phi_range, z_range, rphiz, vpar_init, VELOCITY, MASS, CHARGE, rphiz.shape[0])
+        new_derivs = sopp.test_derivatives_cartesian(quad_info, r_range, phi_range, z_range, rphiz, vpar_init, VELOCITY, MASS, CHARGE, rphiz.shape[0])
         new_derivs = np.reshape(new_derivs, (rphiz.shape[0], 4))
 
         if verify:

@@ -407,10 +407,11 @@ __device__ void build_state(double* x_temp, int deriv_id, bool* symmetry_exploit
 
 
 
-template<RHS id>
+
+template<RHS id, typename... Args>
 __device__ void setup_particle(double* mu, double* t, double* dt, double* dtmax, double* x_temp, bool* symmetry_exploited, int* index_i, int* index_j, int* index_k,
                             double* quad_pts, double* r_shape, double* phi_shape, double* z_shape, double* state, double* derivs,
-                            double* rrange_arr, double* phirange_arr, double* zrange_arr, double vtotal, double tmax, double m, double q, int nparticles_blk){
+                            double* rrange_arr, double* phirange_arr, double* zrange_arr, double vtotal, double tmax, double m, double q, int nparticles_blk, Args... args){
 
     if(threadIdx.x < nparticles_blk){
         t[threadIdx.x] = 0.0;
@@ -428,7 +429,8 @@ __device__ void setup_particle(double* mu, double* t, double* dt, double* dtmax,
     int nz = (zrange_arr[2]-1)/3;
 
     __syncthreads();
-    calc_derivs<RHS::GC_CartesianVacuum>(derivs, 0, quad_pts, x_temp, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, mu, m, q, nphi, nz, nparticles_blk);
+    calc_derivs<id>(derivs, 0, quad_pts, x_temp, symmetry_exploited, index_i, index_j, index_k,
+                     r_shape, phi_shape, z_shape, mu, m, q, nphi, nz, nparticles_blk, args...);
     __syncthreads();
 
     if(threadIdx.x < nparticles_blk){
@@ -894,8 +896,9 @@ extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_p
 }
 
 
-__global__ void test_gpu_derivs_kernel(double* quad_pts, double* srange, double* trange, double* zrange, double* loc, double* vpar, double vtotal, double* out, double m, double q, int n_points){
-    int idx = threadIdx.x + blockIdx.x*PARTICLES_PER_BLOCK;   
+template<RHS id, typename... Args>
+__global__ void test_gpu_derivs_kernel(double* quad_pts, double* srange, double* trange, double* zrange, double* loc, double* vpar, double vtotal, double* out, double m, double q, int n_points, Args... args){
+    int idx = threadIdx.x + blockIdx.x*PARTICLES_PER_BLOCK;    
     double* loc_arr = loc + 3*idx;
     double* out_arr  =  out + 4*idx;
 
@@ -937,14 +940,14 @@ __global__ void test_gpu_derivs_kernel(double* quad_pts, double* srange, double*
     }
     __syncthreads();
 
-    setup_particle<RHS::GC_CartesianVacuum>(mu, t, dt, dtmax, x_temp, symmetry_exploited, index_i, index_j, index_k,
+    setup_particle<id>(mu, t, dt, dtmax, x_temp, symmetry_exploited, index_i, index_j, index_k,
                         quad_pts, r_shape, phi_shape, z_shape, state, derivs,
-                        srange, trange, zrange, p.v_total, 1e-2, m, q, nparticles_blk);
+                        srange, trange, zrange, p.v_total, 1e-2, m, q, nparticles_blk, args...);
     int nphi = (trange[2]-1)/3;
     int nz = (zrange[2]-1)/3;
     __syncthreads();
 
-    calc_derivs<RHS::GC_CartesianVacuum>(derivs, 0, quad_pts, x_temp, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, mu, m, q, nphi, nz, nparticles_blk);
+    calc_derivs<id>(derivs, 0, quad_pts, x_temp, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, mu, m, q, nphi, nz, nparticles_blk);
     __syncthreads();
 
     if(is_valid){
@@ -961,7 +964,7 @@ __global__ void test_gpu_derivs_kernel(double* quad_pts, double* srange, double*
     }
 }
 
-extern "C" py::array_t<double> test_derivatives(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, py::array_t<double> vpar, double v_total, double m, double q, int n_points){
+extern "C" py::array_t<double> test_derivatives_cartesian(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, py::array_t<double> vpar, double v_total, double m, double q, int n_points){
     py::buffer_info quadpts_buf = quad_pts.request();
     double* quadpts_arr = static_cast<double*>(quadpts_buf.ptr);
 
@@ -1018,7 +1021,9 @@ extern "C" py::array_t<double> test_derivatives(py::array_t<double> quad_pts, py
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
     cudaEventRecord(start);
-    test_gpu_derivs_kernel<<<nblks, nthreads>>>(quadpts_d, srange_d, trange_d, zrange_d, loc_d, vpar_d, v_total, out_d, m, q, n_points);
+        
+    test_gpu_derivs_kernel<RHS::GC_CartesianVacuum><<<nblks, nthreads>>>(quadpts_d, srange_d, trange_d, zrange_d, loc_d, vpar_d, v_total, out_d, m, q, n_points);
+    
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
     float milliseconds = 0;
