@@ -608,8 +608,7 @@ void particle_guiding_center_cartesian_derivs(
 }
 
 
-py::array_t<double> simsopt_derivs(shared_ptr<MagneticField<xt::pytensor>> field, py::array_t<double> loc, double m, double q, double vtotal, double vtang){
-
+py::array_t<double> simsopt_derivs_cartesian(shared_ptr<MagneticField<xt::pytensor>> field, py::array_t<double> loc, double m, double q, double vtotal, double vtang){
 
     py::buffer_info loc_buf = loc.request();
     double* loc_arr = static_cast<double*>(loc_buf.ptr);
@@ -618,20 +617,37 @@ py::array_t<double> simsopt_derivs(shared_ptr<MagneticField<xt::pytensor>> field
     array<double, 3> stz = {loc_arr[0], loc_arr[1], loc_arr[2]};
 
     array<double, 4> derivs;
+
     particle_guiding_center_cartesian_derivs(field, stz, derivs, m, q, vtotal, vtang);
 
     for(int i=0; i<4; ++i){
         out[i] = derivs[i];
     }
 
+    auto result = py::array_t<double>(4, out);
+    return result;
+}
+
+py::array_t<double> simsopt_derivs_boozer(shared_ptr<BoozerMagneticField<xt::pytensor>> field, py::array_t<double> loc, double m, double q, double vtotal, double vtang){
+
+    py::buffer_info loc_buf = loc.request();
+    double* loc_arr = static_cast<double*>(loc_buf.ptr);
+
+    double out[4];
+    array<double, 3> stz = {loc_arr[0], loc_arr[1], loc_arr[2]};
+
+    array<double, 4> derivs;
+
+    particle_guiding_center_boozer_derivs(field, stz, derivs, m, q, vtotal, vtang);
+
+    for(int i=0; i<4; ++i){
+        out[i] = derivs[i];
+    }
 
     auto result = py::array_t<double>(4, out);
-
-
-
     return result;
-
 }
+
 
 
 template

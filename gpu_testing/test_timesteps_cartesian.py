@@ -48,7 +48,7 @@ def test_derivs(field, sc_praticle, nfp, n_metagrid_pts, n_test_pts, verify=True
                 print("computing simsopt derivatives")
                 old_derivs = np.empty((n_test_pts, 4))
                 for i in range(n_test_pts):
-                        old_derivs[i,:] = sopp.simsopt_derivs(field, rphiz[i,:], MASS, CHARGE, VELOCITY, vpar_init[i])
+                        old_derivs[i,:] = sopp.simsopt_derivs_cartesian(field, rphiz[i,:], MASS, CHARGE, VELOCITY, vpar_init[i])
 
                 dist_fn = sc_particle.evaluate_rphiz(rphiz)[:, 0]
                 print(dist_fn)
