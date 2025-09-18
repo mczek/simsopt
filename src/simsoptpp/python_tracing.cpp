@@ -22,7 +22,7 @@ extern "C" py::array_t<double> test_derivatives_cartesian(py::array_t<double> qu
 extern "C" py::array_t<double> test_derivatives_boozer(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, py::array_t<double> vpar, double v_total, double m, double q,  double psi0, int n_points);
 
 
-extern "C" vector<double> test_timestep(py::array_t<double> quad_pts, py::array_t<double> srange,
+extern "C" vector<double> test_timestep_cartesian(py::array_t<double> quad_pts, py::array_t<double> srange,
         py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
         double tol, int nparticles);
 void init_tracing(py::module_ &m){
@@ -150,7 +150,7 @@ void init_tracing(py::module_ &m){
         );
 
 
-    m.def("test_timestep", &test_timestep,
+    m.def("test_timestep_cartesian", &test_timestep_cartesian,
         py::arg("quad_pts"),
         py::arg("srange"),
         py::arg("trange"),

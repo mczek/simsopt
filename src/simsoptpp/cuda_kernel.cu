@@ -1158,8 +1158,9 @@ extern "C" py::array_t<double> test_derivatives_boozer(py::array_t<double> quad_
 }
 
 
+template<RHS id, typename... Args>
 __global__ void test_gpu_timestep_kernel(particle_t* particles, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr,
-                        double m, double q, int nparticles){
+                        double m, double q, int nparticles, Args... args){
     int idx = threadIdx.x + blockIdx.x*PARTICLES_PER_BLOCK;
     particle_t p;
 
@@ -1197,9 +1198,9 @@ __global__ void test_gpu_timestep_kernel(particle_t* particles, double* srange_a
     __syncthreads();
 
     // calculate the particle's magnetic moment mu, dt, dtmax
-    setup_particle<RHS::GC_CartesianVacuum>(mu, t, dt, dtmax, x_temp, symmetry_exploited, index_i, index_j, index_k,
+    setup_particle<id>(mu, t, dt, dtmax, x_temp, symmetry_exploited, index_i, index_j, index_k,
                         quadpts_arr, r_shape, phi_shape, z_shape, state, derivs,
-                        srange_arr, trange_arr, zrange_arr, p.v_total, 1e-2, m, q, nparticles_blk);
+                        srange_arr, trange_arr, zrange_arr, p.v_total, 1e-2, m, q, nparticles_blk, args...);
     int nphi = (trange_arr[2]-1)/3;
     int nz = (zrange_arr[2]-1)/3;
     __syncthreads();
@@ -1210,14 +1211,14 @@ __global__ void test_gpu_timestep_kernel(particle_t* particles, double* srange_a
         for(int k=0; k<7; ++k){
             // if the thread is responsible for a particle, compute the point at which the derivative will be computed
              if(is_valid){
-                build_state<RHS::GC_CartesianVacuum>(x_temp, k, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, state, derivs, dt,
-                            srange_arr, trange_arr, zrange_arr);
+                build_state<id>(x_temp, k, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, state, derivs, dt,
+                            srange_arr, trange_arr, zrange_arr, args...);
             }
 
             // ensure that all threads have updated x_temp before calculating derivatives, where a data race would occur
             __syncthreads();
-            calc_derivs<RHS::GC_CartesianVacuum>(derivs, k, quadpts_arr, x_temp, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, mu, m, q,
-                        nphi, nz, nparticles_blk);
+            calc_derivs<id>(derivs, k, quadpts_arr, x_temp, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, mu, m, q,
+                        nphi, nz, nparticles_blk, args...);
 
             // ensure all particles have derivative calculations before accepting/rejecting timestep
             __syncthreads();
@@ -1246,7 +1247,7 @@ __global__ void test_gpu_timestep_kernel(particle_t* particles, double* srange_a
 
 
 
-extern "C" vector<double> test_timestep(py::array_t<double> quad_pts, py::array_t<double> srange,
+extern "C" vector<double> test_timestep_cartesian(py::array_t<double> quad_pts, py::array_t<double> srange,
         py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
         double tol, int nparticles){
 
@@ -1328,7 +1329,7 @@ extern "C" vector<double> test_timestep(py::array_t<double> quad_pts, py::array_
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
     cudaEventRecord(start);
-    test_gpu_timestep_kernel<<<nblks, nthreads>>>(particles_d, srange_d, trange_d, zrange_d, quadpts_d, m, q,  nparticles);
+    test_gpu_timestep_kernel<RHS::GC_CartesianVacuum><<<nblks, nthreads>>>(particles_d, srange_d, trange_d, zrange_d, quadpts_d, m, q,  nparticles);
 
     gpuErrchk( cudaPeekAtLastError() );
     gpuErrchk( cudaDeviceSynchronize() );
