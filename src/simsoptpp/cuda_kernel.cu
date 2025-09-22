@@ -236,6 +236,7 @@ template <> __device__ void calc_derivs<RHS::GC_BoozerVacuum>(double* derivs, in
         derivs[(6*deriv_id + 2)*PARTICLES_PER_BLOCK + threadIdx.x] = v_par*modB/G;
         derivs[(6*deriv_id + 3)*PARTICLES_PER_BLOCK + threadIdx.x] = -(iota*dmodBdtheta + dmodBdzeta)*mu_val*modB / G;
         derivs[(6*deriv_id + 4)*PARTICLES_PER_BLOCK + threadIdx.x] = modB; // modB for setting mu
+        derivs[(6*deriv_id + 5)*PARTICLES_PER_BLOCK + threadIdx.x] = G;
         // derivs[(6*deriv_id + 5)*PARTICLES_PER_BLOCK + threadIdx.x] = // no boundary dist fn
     }
 
@@ -454,7 +455,28 @@ __device__ void build_state(double* x_temp, int deriv_id, bool* symmetry_exploit
 }
 
 
+// calculate maximum allowable timestep to allow at most a quarter of a revolution per stel
+template<RHS id>
+__device__ void calc_max_timestep_size(double* dtmax, double* loc, double* derivs, double vtotal);
 
+template<>
+__device__ void calc_max_timestep_size<RHS::GC_CartesianVacuum>(double* dtmax, double* loc, double* derivs, double vtotal){
+    double x = loc[0*PARTICLES_PER_BLOCK + threadIdx.x];
+    double y = loc[1*PARTICLES_PER_BLOCK + threadIdx.x];
+    double z = loc[2*PARTICLES_PER_BLOCK + threadIdx.x];
+    double v_par = loc[3*PARTICLES_PER_BLOCK + threadIdx.x];
+
+    double r = sqrt(x*x + y*y);
+    dtmax[threadIdx.x] = r*0.5*M_PI / vtotal;
+}
+
+
+template<>
+__device__ void calc_max_timestep_size<RHS::GC_BoozerVacuum>(double* dtmax, double* loc, double* derivs, double vtotal){
+    double modB = derivs[(6*0 + 4)*PARTICLES_PER_BLOCK + threadIdx.x];
+    double G = derivs[(6*0 + 5)*PARTICLES_PER_BLOCK + threadIdx.x];
+    dtmax[threadIdx.x] = (G / modB)*0.5*M_PI / vtotal;
+}
 
 template<RHS id, typename... Args>
 __device__ void setup_particle(double* mu, double* t, double* dt, double* dtmax, double* x_temp, bool* symmetry_exploited, int* index_i, int* index_j, int* index_k,
@@ -489,11 +511,14 @@ __device__ void setup_particle(double* mu, double* t, double* dt, double* dtmax,
         double denom = 1 / (2*modB);
         mu[threadIdx.x] = v_perp2 * denom;
 
-        double x = state[0*PARTICLES_PER_BLOCK + threadIdx.x];
-        double y = state[1*PARTICLES_PER_BLOCK + threadIdx.x];
-        // can at most do quarter of a revolution per step
-        double r = sqrt(x*x + y*y);
-        dtmax[threadIdx.x] = r*0.5*M_PI/vtotal;
+        // double x = state[0*PARTICLES_PER_BLOCK + threadIdx.x];
+        // double y = state[1*PARTICLES_PER_BLOCK + threadIdx.x];
+        // // can at most do quarter of a revolution per step
+        // double r = sqrt(x*x + y*y);
+        // dtmax[threadIdx.x] = r*0.5*M_PI/vtotal;
+
+        calc_max_timestep_size<id>(dtmax, x_temp, derivs, vtotal);
+
         dt[threadIdx.x] = 1e-3*dtmax[threadIdx.x];
     }
 }
@@ -1212,7 +1237,7 @@ __global__ void test_gpu_timestep_kernel(particle_t* particles, double* srange_a
             // if the thread is responsible for a particle, compute the point at which the derivative will be computed
              if(is_valid){
                 build_state<id>(x_temp, k, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, state, derivs, dt,
-                            srange_arr, trange_arr, zrange_arr, args...);
+                            srange_arr, trange_arr, zrange_arr);
             }
 
             // ensure that all threads have updated x_temp before calculating derivatives, where a data race would occur
@@ -1244,7 +1269,6 @@ __global__ void test_gpu_timestep_kernel(particle_t* particles, double* srange_a
     }
     return;
 }
-
 
 
 extern "C" vector<double> test_timestep_cartesian(py::array_t<double> quad_pts, py::array_t<double> srange,
@@ -1330,6 +1354,135 @@ extern "C" vector<double> test_timestep_cartesian(py::array_t<double> quad_pts, 
     cudaEventCreate(&stop);
     cudaEventRecord(start);
     test_gpu_timestep_kernel<RHS::GC_CartesianVacuum><<<nblks, nthreads>>>(particles_d, srange_d, trange_d, zrange_d, quadpts_d, m, q,  nparticles);
+
+    gpuErrchk( cudaPeekAtLastError() );
+    gpuErrchk( cudaDeviceSynchronize() );
+
+    // cudaDeviceSynchronize();
+    // cudaError_t err = cudaGetLastError(); 
+    // CHECK_CUDA_ERROR(err);
+    gpuErrchk( cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost) );
+
+
+    // err = cudaGetLastError(); 
+    // CHECK_CUDA_ERROR(err);
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+    float milliseconds = 0;
+    cudaEventElapsedTime(&milliseconds, start, stop);
+    std::cout << "tracing kernels time (ms): " << milliseconds<< "\n";
+
+    
+    vector<double> particle_output(7*nparticles);
+    for(int i=0; i<nparticles; ++i){
+        double y1 = particles[i].state[0];
+        double y2 = particles[i].state[1];
+        double z = particles[i].state[2];
+        double v_par = particles[i].state[3];
+
+        // double t = atan2(y2, y1);
+        // t += 2*M_PI*(t < 0);
+        
+        // last location in Boozer coordinates
+        particle_output[7*i] = y1;
+        particle_output[7*i + 1] = y2;
+        particle_output[7*i + 2] = z;
+        particle_output[7*i + 3] = v_par;
+        particle_output[7*i + 4] = particles[i].t;
+        // std::cout << "copied back t=" << particles[i].t << "\n";
+        particle_output[7*i + 5] = particles[i].step_accept;
+        particle_output[7*i + 6] = particles[i].step_attempt;
+    }
+
+
+    delete[] particles;
+    gpuErrchk( cudaFree(particles_d) );
+    return particle_output;
+}
+
+extern "C" vector<double> test_timestep_boozer(py::array_t<double> quad_pts, py::array_t<double> srange,
+        py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
+        double tol, double psi0, int nparticles){
+
+    //  read data in from python
+    py::buffer_info stz_init_buf = stz_init.request();
+    double* stz_init_arr = static_cast<double*>(stz_init_buf.ptr);
+
+    py::buffer_info vtang_buf = vtang.request();
+    double* vtang_arr = static_cast<double*>(vtang_buf.ptr);
+
+    // contains b field
+    py::buffer_info quadpts_buf = quad_pts.request();
+    double* quadpts_arr = static_cast<double*>(quadpts_buf.ptr);
+
+    py::buffer_info s_buf = srange.request();
+    double* srange_arr = static_cast<double*>(s_buf.ptr);
+
+    py::buffer_info t_buf = trange.request();
+    double* trange_arr = static_cast<double*>(t_buf.ptr);
+
+    py::buffer_info z_buf = zrange.request();
+    double* zrange_arr = static_cast<double*>(z_buf.ptr);
+
+
+    particle_t* particles =  new particle_t[nparticles];
+
+    // load initial conditions
+    for(int i=0; i<nparticles; ++i){
+        int start = 3*i;
+
+        double r = stz_init_arr[start];
+        double phi = stz_init_arr[start+1];
+        
+        // convert to cartesian coordinates
+        particles[i].state[0] = r*cos(phi); // x
+        particles[i].state[1] = r*sin(phi); // y
+        particles[i].state[2] = stz_init_arr[start+2]; // z
+        particles[i].state[3] = vtang_arr[i];
+        particles[i].v_perp = sqrt(vtotal*vtotal -  vtang_arr[i]*vtang_arr[i]);
+        particles[i].v_total = vtotal;
+        particles[i].has_left = false;
+        particles[i].t = 0.0;
+        
+        particles[i].step_accept = 0;
+        particles[i].step_attempt = 0;
+        particles[i].id = i;
+    }
+    
+    particle_t* particles_d;
+    gpuErrchk( cudaMalloc((void**)&particles_d, nparticles * sizeof(particle_t)) );
+    gpuErrchk( cudaMemcpy(particles_d, particles, nparticles * sizeof(particle_t), cudaMemcpyHostToDevice) );
+
+    double* srange_d;
+    gpuErrchk( cudaMalloc((void**)&srange_d, 3 * sizeof(double)) );
+    gpuErrchk( cudaMemcpy(srange_d, srange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice) );
+
+    double* zrange_d;
+    gpuErrchk( cudaMalloc((void**)&zrange_d, 3 * sizeof(double)) );
+    gpuErrchk(cudaMemcpy(zrange_d, zrange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice) );
+
+    double* trange_d;
+    gpuErrchk(cudaMalloc((void**)&trange_d, 3 * sizeof(double)) );
+    gpuErrchk(cudaMemcpy(trange_d, trange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice) );
+
+
+    double* quadpts_d;
+
+    // std::cout << "quadpts.size() = " << quad_pts.size() << "\n";
+    gpuErrchk( cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(double)) );
+    gpuErrchk( cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(double), cudaMemcpyHostToDevice) );
+
+    int nthreads = THREADS_PER_BLOCK;
+
+    int nblks = nparticles / PARTICLES_PER_BLOCK + 1;
+    std::cout << "starting particle tracing kernel\n";
+
+       
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+    cudaEventRecord(start);
+    test_gpu_timestep_kernel<RHS::GC_BoozerVacuum><<<nblks, nthreads>>>(particles_d, srange_d, trange_d, zrange_d, quadpts_d, m, q, nparticles, psi0);
 
     gpuErrchk( cudaPeekAtLastError() );
     gpuErrchk( cudaDeviceSynchronize() );

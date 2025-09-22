@@ -62,7 +62,6 @@ def test_derivs(field, nfp, n_metagrid_pts, n_test_pts):
 def test_timestep(field, nfp, n_metagrid_pts, n_test_pts):
 
         # generate test points
-        n_test_pts = 10000
         s = np.random.uniform(low=0, high=0.95, size=(n_test_pts,1))
         t = np.random.uniform(low=0, high=2*np.pi, size=(n_test_pts,1))
         z = np.random.uniform(low=0, high=2*np.pi, size=(n_test_pts,1))
@@ -85,7 +84,7 @@ def test_timestep(field, nfp, n_metagrid_pts, n_test_pts):
         srange, trange, zrange, quad_info = setup_interpolant(field, nfp, n_metagrid_pts)
         stz = np.ascontiguousarray(stz)
         psi0 = field.psi0
-        last_time = sopp.test_timestep(
+        last_time = sopp.test_timestep_boozer(
                 quad_pts=quad_info, 
                 srange=srange,
                 trange=trange,
@@ -139,4 +138,4 @@ if __name__ == "__main__":
 
         test_derivs(field, nfp, 15, 10000)
 
-        # test_timestep(field, nfp, 15, 10000)
+        test_timestep(field, nfp, 15, 10000)
