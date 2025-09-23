@@ -550,6 +550,7 @@ __device__ void check_has_left<RHS::GC_BoozerVacuum>(bool* has_left, double* sta
     double x2 = state[1*PARTICLES_PER_BLOCK + threadIdx.x];
     double s = sqrt(x1*x1 + x2*x2);
 
+
     has_left[threadIdx.x] = s >= 1; 
 }
 
@@ -596,6 +597,12 @@ __device__ void adjust_time(double* t, double* dt, double* state, double* derivs
         }
         // check if particle has left the device
         check_has_left<id>(has_left, state, derivs);
+
+        double x1 = state[0*PARTICLES_PER_BLOCK + threadIdx.x];
+        double x2 = state[1*PARTICLES_PER_BLOCK + threadIdx.x];
+        double s = sqrt(x1*x1 + x2*x2);
+        printf("particle %d, time = %.15e, s=%.15e\n", threadIdx.x, t[threadIdx.x], s);
+
     } else {
         // Reject the step and try again with smaller dt
         dt[threadIdx.x] = dt_new;
@@ -644,7 +651,7 @@ __global__ void particle_trace_kernel(particle_t* particles, double* srange_arr,
     // calculate the particle's magnetic moment mu, dt, dtmax
     setup_particle<id>(mu, t, dt, dtmax, x_temp, symmetry_exploited, index_i, index_j, index_k,
                         quadpts_arr, r_shape, phi_shape, z_shape, state, derivs,
-                        srange_arr, trange_arr, zrange_arr, p.v_total, 1e-2, m, q, nparticles_blk, args...);
+                        srange_arr, trange_arr, zrange_arr, p.v_total, tmax, m, q, nparticles_blk, args...);
     int nphi = (trange_arr[2]-1)/3;
     int nz = (zrange_arr[2]-1)/3;
     __syncthreads();
@@ -816,7 +823,20 @@ extern "C" vector<double> cartesian_gpu_tracing(py::array_t<double> quad_pts, py
 extern "C" vector<double> boozer_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
         py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
         double tmax, double tol, double psi0, int nparticles){
-            return gpu_tracing<RHS::GC_CartesianVacuum>(quad_pts, srange, trange, zrange, stz_init, m, q, vtotal, vtang, tmax, tol, nparticles, psi0);
+
+            //  read data in from python
+            py::buffer_info stz_init_buf = stz_init.request();
+            double* stz_init_arr = static_cast<double*>(stz_init_buf.ptr);
+            
+            for(int i=0; i<nparticles; ++i){
+                double s = stz_init_arr[3*i];
+                double theta = stz_init_arr[3*i+1];
+
+                stz_init_arr[3*i] = s*cos(theta);
+                stz_init_arr[3*i+1] = s*sin(theta);
+            }
+
+            return gpu_tracing<RHS::GC_BoozerVacuum>(quad_pts, srange, trange, zrange, stz_init, m, q, vtotal, vtang, tmax, tol, nparticles, psi0);
         }
 
 
