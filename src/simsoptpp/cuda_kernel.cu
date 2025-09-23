@@ -532,6 +532,28 @@ __device__ void setup_particle(double* mu, double* t, double* dt, double* dtmax,
     }
 }
 
+
+// determine whether a particle has been lost or not
+// in cartesian coordinates, we check the signed distance function
+// in boozer coordinates we check for s >= 1
+template<RHS id>
+__device__ void check_has_left(bool* has_left, double* state, double* derivs);
+
+template<>
+__device__ void check_has_left<RHS::GC_CartesianVacuum>(bool* has_left, double* state, double* derivs){
+    has_left[threadIdx.x] = derivs[(6*6 + 5)*PARTICLES_PER_BLOCK + threadIdx.x] < 0; // boundary dist fn at new location
+}
+
+template<>
+__device__ void check_has_left<RHS::GC_BoozerVacuum>(bool* has_left, double* state, double* derivs){
+    double x1 = state[0*PARTICLES_PER_BLOCK + threadIdx.x];
+    double x2 = state[1*PARTICLES_PER_BLOCK + threadIdx.x];
+    double s = sqrt(x1*x1 + x2*x2);
+
+    has_left[threadIdx.x] = s >= 1; 
+}
+
+template<RHS id>
 __device__ void adjust_time(double* t, double* dt, double* state, double* derivs, double* x_temp, bool* has_left, double atol, double rtol, double tmax, double* dtmax){
     if(has_left[threadIdx.x]){
         return;
@@ -572,8 +594,8 @@ __device__ void adjust_time(double* t, double* dt, double* state, double* derivs
         for(int i = 0; i < 4; i++) {
             state[i*PARTICLES_PER_BLOCK + threadIdx.x] = x_temp[i*PARTICLES_PER_BLOCK + threadIdx.x];
         }
-        
-        has_left[threadIdx.x] = derivs[(6*6 + 5)*PARTICLES_PER_BLOCK + threadIdx.x] < 0; // boundary dist fn at new location
+        // check if particle has left the device
+        check_has_left<id>(has_left, state, derivs);
     } else {
         // Reject the step and try again with smaller dt
         dt[threadIdx.x] = dt_new;
@@ -651,7 +673,7 @@ __global__ void particle_trace_kernel(particle_t* particles, double* srange_arr,
         double rtol=1e-9;
         __syncthreads();
         if(is_valid){
-            adjust_time(t, dt, state, derivs, x_temp, has_left, atol, rtol, tmax, dtmax);
+            adjust_time<id>(t, dt, state, derivs, x_temp, has_left, atol, rtol, tmax, dtmax);
         }
         __syncthreads();
     }
@@ -1275,7 +1297,7 @@ __global__ void test_gpu_timestep_kernel(particle_t* particles, double* srange_a
         double rtol=1e-9;
         __syncthreads();
         if(is_valid && t[threadIdx.x] == 0.0){
-            adjust_time(t, dt, state, derivs, x_temp, has_left, atol, rtol, 1e-2, dtmax);
+            adjust_time<id>(t, dt, state, derivs, x_temp, has_left, atol, rtol, 1e-2, dtmax);
         }
         __syncthreads();
     }
