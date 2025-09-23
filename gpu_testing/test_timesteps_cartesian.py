@@ -10,7 +10,11 @@ from simsopt.util.constants import (
         ALPHA_PARTICLE_CHARGE as CHARGE
         )
 import os
-from test_interpolant_cartesian import *
+
+from simsopt.configs import get_ncsx_data
+from simsopt.field import BiotSavart, coils_via_symmetries, InterpolatedField
+from simsopt.geo import SurfaceRZFourier, SurfaceClassifier
+from simsopt.util import cartesian_interpolant  
 
 np.random.seed(1800)
 
@@ -36,36 +40,39 @@ def test_derivs(field, sc_praticle, nfp, n_metagrid_pts, n_test_pts, verify=True
       
 
         ### NEW INTERPOLANT
-        r_range, phi_range, z_range, quad_info = setup_interpolant(field, sc_particle, nfp, n_metagrid_pts)
+        r_range, phi_range, z_range, quad_info = cartesian_interpolant(field, sc_particle, nfp, n_metagrid_pts)
 
         # psi0 =field.psi0
 
-        print("calculating new derivatives")
+        # print("calculating new derivatives")
         new_derivs = sopp.test_derivatives_cartesian(quad_info, r_range, phi_range, z_range, rphiz, vpar_init, VELOCITY, MASS, CHARGE, rphiz.shape[0])
         new_derivs = np.reshape(new_derivs, (rphiz.shape[0], 4))
 
         if verify:
-                print("computing simsopt derivatives")
+                # print("computing simsopt derivatives")
                 old_derivs = np.empty((n_test_pts, 4))
                 for i in range(n_test_pts):
                         old_derivs[i,:] = sopp.simsopt_derivs_cartesian(field, rphiz[i,:], MASS, CHARGE, VELOCITY, vpar_init[i])
 
                 dist_fn = sc_particle.evaluate_rphiz(rphiz)[:, 0]
-                print(dist_fn)
+                # print(dist_fn)
                 rel_err = np.abs((old_derivs - new_derivs) / old_derivs)
                 rel_err = rel_err[dist_fn > 0, :] # only consider particles inside the device
                 diff = np.max(rel_err)
-                print(np.abs(old_derivs - new_derivs) / old_derivs)
+                # print(np.abs(old_derivs - new_derivs) / old_derivs)
 
                 print("Maximum relative error in derivative values on {} points: {}".format(rel_err.shape[0], diff))
-
-                print("culprit particle:")
-                row_index = np.argmax(rel_err) // rel_err.shape[1]
-                print(rphiz[row_index, :])
-                print(vpar_init[row_index])
-                print("simsopt", old_derivs[row_index, :])
-                print("new", new_derivs[row_index, :])
-                print(rel_err[row_index, :])
+                if diff > 1e-7:
+                        print("CARTESIAN DERIVS TEST FAILED")
+                        print("culprit particle:")
+                        row_index = np.argmax(rel_err) // rel_err.shape[1]
+                        print(rphiz[row_index, :])
+                        print(vpar_init[row_index])
+                        print("simsopt", old_derivs[row_index, :])
+                        print("new", new_derivs[row_index, :])
+                        print(rel_err[row_index, :])
+                else:
+                        print("CARTESIAN DERIVS TEST SUCCESS")
 
 
 
@@ -92,8 +99,8 @@ def test_timestep(field, sc_particle, nfp, n_metagrid_pts, n_test_pts, verify=Tr
 
 
         ### NEW INTERPOLANT
-        print("setting up new interpolant")
-        r_range, phi_range, z_range, quad_info = setup_interpolant(field, sc_particle, nfp, n_metagrid_pts)
+        # print("setting up new interpolant")
+        r_range, phi_range, z_range, quad_info = cartesian_interpolant(field, sc_particle, nfp, n_metagrid_pts)
         quad_info = np.ascontiguousarray(quad_info)
         # # for i in range(n_test_pts):
         # print(r_range)
@@ -104,11 +111,11 @@ def test_timestep(field, sc_particle, nfp, n_metagrid_pts, n_test_pts, verify=Tr
 
         # rphiz = np.array([[1.36825919, 0.61279615, 0.26253024]])
         # vpar_init = [-6203622.275269774]
-        print("rphiz", rphiz)
+        # print("rphiz", rphiz)
 
         # print(i, rphiz_test, vpar_init_test)
         # print(quad_info.shape)
-        print("testing new timstep")
+        # print("testing new timstep")
         
         last_time = sopp.test_timestep_cartesian(
                 quad_pts=quad_info, 
@@ -135,7 +142,7 @@ def test_timestep(field, sc_particle, nfp, n_metagrid_pts, n_test_pts, verify=Tr
 
         # print("new final positions", new_final_positions)
 
-        print("computing simsopt timestep")
+        # print("computing simsopt timestep")
 
         if verify:
                 r = rphiz[:, 0].reshape(-1,1)
@@ -143,17 +150,17 @@ def test_timestep(field, sc_particle, nfp, n_metagrid_pts, n_test_pts, verify=Tr
                 z = rphiz[:, 2].reshape(-1,1)
                 x = r*np.cos(phi)
                 y = r*np.sin(phi)
-                print(x,y,z)
+                # print(x,y,z)
                 xyz = np.hstack((x,y,z))
-                print(xyz)
-                print(vpar_init)
-                print(xyz.shape)
-                print(len(vpar_init))
+                # print(xyz)
+                # print(vpar_init)
+                # print(xyz.shape)
+                # print(len(vpar_init))
                 gc_tys, gc_zeta_hits = trace_particles(
                         field, xyz, vpar_init, tmax=1e-2, mass=MASS, charge=CHARGE,
                         Ekin=ENERGY, tol=1e-9, stopping_criteria=[IterationStoppingCriterion(1)],
                         forget_exact_path=True)
-                print("done with simsopt timestep")
+                # print("done with simsopt timestep")
                 # print(gc_tys)
                 # print(gc_zeta_hits)
                 final_positions = np.array([x[-1] for x in gc_tys])
@@ -162,14 +169,17 @@ def test_timestep(field, sc_particle, nfp, n_metagrid_pts, n_test_pts, verify=Tr
                 # print(np.abs(final_positions - new_final_positions) / final_positions)
 
                 print("Maximum relative error in final positions on {} points: {}".format(n_test_pts, diff))
-
-                print("culprit particle:")
-                row_index = np.argmax(rel_err) // rel_err.shape[1]
-                print(rphiz[row_index, :])
-                print(vpar_init[row_index])
-                print("simsopt", final_positions[row_index, :])
-                print("new", new_final_positions[row_index, :])
-                print(rel_err[row_index, :])
+                if diff > 1e-6:
+                        print("CARTESIAN TIMESTEP TEST FAILURE")
+                        print("culprit particle:")
+                        row_index = np.argmax(rel_err) // rel_err.shape[1]
+                        print(rphiz[row_index, :])
+                        print(vpar_init[row_index])
+                        print("simsopt", final_positions[row_index, :])
+                        print("new", new_final_positions[row_index, :])
+                        print(rel_err[row_index, :])
+                else:
+                        print("CARTESIAN TIMESTEP TEST SUCCESS")
 
 
 if __name__ == "__main__":

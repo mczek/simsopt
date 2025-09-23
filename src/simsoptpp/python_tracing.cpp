@@ -12,9 +12,13 @@ using std::vector;
 #include <Eigen/Core>
 
 
-extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
+extern "C" vector<double> cartesian_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
         py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
         double tmax, double tol, int nparticles);
+
+extern "C" vector<double> boozer_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
+        py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
+        double tmax, double tol, double psi0, int nparticles);
 
 extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, std::string coordinates, int n_points);
 
@@ -82,7 +86,7 @@ void init_tracing(py::module_ &m){
         py::arg("stopping_criteria")=vector<shared_ptr<StoppingCriterion>>{}
         );
 
-    m.def("gpu_tracing", &gpu_tracing,
+    m.def("cartesian_gpu_tracing", &cartesian_gpu_tracing,
         py::arg("quad_pts"),
         py::arg("srange"),
         py::arg("trange"),
@@ -96,6 +100,24 @@ void init_tracing(py::module_ &m){
         py::arg("tol"),
         py::arg("nparticles")
         );
+
+    
+    m.def("boozer_gpu_tracing", &boozer_gpu_tracing,
+        py::arg("quad_pts"),
+        py::arg("srange"),
+        py::arg("trange"),
+        py::arg("zrange"),
+        py::arg("stz_init"),
+        py::arg("m"),
+        py::arg("q"),
+        py::arg("vtotal"),
+        py::arg("vtang"),
+        py::arg("tmax"),
+        py::arg("tol"),
+        py::arg("psi0"),
+        py::arg("nparticles")
+        );
+
 
     m.def("test_gpu_interpolation", &test_gpu_interpolation,
         py::arg("quad_pts"),

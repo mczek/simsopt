@@ -10,8 +10,7 @@ from simsopt.util.constants import (
         ALPHA_PARTICLE_CHARGE as CHARGE
         )
 import os
-from test_interpolant_boozer import *
-
+from simsopt.util import boozer_interpolant
 np.random.seed(1800)
 
 
@@ -25,35 +24,40 @@ def test_derivs(field, nfp, n_metagrid_pts, n_test_pts):
         VELOCITY = np.sqrt(2 * ENERGY / MASS)
         vpar_init = np.random.uniform(-VELOCITY, VELOCITY, (n_test_pts,))
 
-        print("computing simsopt derivatives")
+        # print("computing simsopt derivatives")
         old_derivs = np.empty((n_test_pts, 4))
         for i in range(n_test_pts):
                 old_derivs[i,:] = sopp.simsopt_derivs_boozer(field, stz[i,:], MASS, CHARGE, VELOCITY, vpar_init[i])
 
 
         ### NEW INTERPOLANT
-        srange, trange, zrange, quad_info = setup_interpolant(field, nfp, n_metagrid_pts)
+        srange, trange, zrange, quad_info, maxJ = boozer_interpolant(field, nfp, n_metagrid_pts)
         stz = np.ascontiguousarray(stz)
 
         psi0 =field.psi0
 
-        print("calculating new derivatives")
+        # print("calculating new derivatives")
         new_derivs = sopp.test_derivatives_boozer(quad_info, srange, trange, zrange, stz, vpar_init, VELOCITY, MASS, CHARGE, psi0, stz.shape[0])
         new_derivs = np.reshape(new_derivs, (stz.shape[0], 4))
 
         rel_err = np.abs((old_derivs - new_derivs) / old_derivs)
         diff = np.max(rel_err)
-        print(np.abs(old_derivs - new_derivs) / old_derivs)
+        # print(np.abs(old_derivs - new_derivs) / old_derivs)
 
         print("Maximum relative error in derivative values on {} points: {}".format(n_test_pts, diff))
 
-        print("culprit particle:")
-        row_index = np.argmax(rel_err) // rel_err.shape[1]
-        print(stz[row_index, :])
-        print(vpar_init[row_index])
-        print("simsopt", old_derivs[row_index, :])
-        print("new", new_derivs[row_index, :])
-        print(rel_err[row_index, :])
+        if diff > 1e-8:
+                print("BOOZER RHS TEST FAILED")
+
+                print("culprit particle:")
+                row_index = np.argmax(rel_err) // rel_err.shape[1]
+                print(stz[row_index, :])
+                print(vpar_init[row_index])
+                print("simsopt", old_derivs[row_index, :])
+                print("new", new_derivs[row_index, :])
+                print(rel_err[row_index, :])
+        else:
+                print("BOOZER RHS TEST SUCCESS")
 
 
 
@@ -70,7 +74,7 @@ def test_timestep(field, nfp, n_metagrid_pts, n_test_pts):
         VELOCITY = np.sqrt(2 * ENERGY / MASS)
         vpar_init = np.random.uniform(-VELOCITY, VELOCITY, (n_test_pts,))
 
-        print("computing simsopt timestep")
+        # print("computing simsopt timestep")
 
         
         gc_tys, gc_zeta_hits = trace_particles_boozer(
@@ -80,8 +84,8 @@ def test_timestep(field, nfp, n_metagrid_pts, n_test_pts):
         
         final_positions = np.array([x[-1] for x in gc_tys])
 
-        print("computing new timesteps")
-        srange, trange, zrange, quad_info = setup_interpolant(field, nfp, n_metagrid_pts)
+        # print("computing new timesteps")
+        srange, trange, zrange, quad_info, maxJ = boozer_interpolant(field, nfp, n_metagrid_pts)
         stz = np.ascontiguousarray(stz)
         psi0 = field.psi0
         last_time = sopp.test_timestep_boozer(
@@ -105,17 +109,22 @@ def test_timestep(field, nfp, n_metagrid_pts, n_test_pts):
 
         rel_err = np.abs((final_positions - new_final_positions) / final_positions)
         diff = np.max(rel_err)
-        print(np.abs(final_positions - new_final_positions) / final_positions)
+        # print(np.abs(final_positions - new_final_positions) / final_positions)
 
         print("Maximum relative error in final positions on {} points: {}".format(n_test_pts, diff))
+        if diff > 1e-8:
+                print("BOOZER TIMESTEP TEST FAILED")
 
-        print("culprit particle:")
-        row_index = np.argmax(rel_err) // rel_err.shape[1]
-        print(stz[row_index, :])
-        print(vpar_init[row_index])
-        print("simsopt", final_positions[row_index, :])
-        print("new", new_final_positions[row_index, :])
-        print(rel_err[row_index, :])
+                print("culprit particle:")
+                row_index = np.argmax(rel_err) // rel_err.shape[1]
+                print(stz[row_index, :])
+                print(vpar_init[row_index])
+                print("simsopt", final_positions[row_index, :])
+                print("new", new_final_positions[row_index, :])
+                print(rel_err[row_index, :])
+        else:
+                print("BOOZER TIMESTEP TEST SUCCESS")
+        
 
 
 if __name__ == "__main__":

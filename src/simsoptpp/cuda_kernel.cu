@@ -94,7 +94,7 @@ __host__ __device__ void shape(double& x, double& output, int i) {
 // nparticles_blk store the number of *actual* particles in the current block
 //
 // note that nparticles_blk isn't always equal to PARTICLES_PER_BLOCK
-template <int n> __device__ void interpolate(double*  out, const double* __restrict__ data, const int* index_i, const int* __restrict__ index_j, const int* __restrict__ index_k, 
+template <int n> __device__ void interpolate(double*  out, const double* __restrict__ data, const int* __restrict__ index_i, const int* __restrict__ index_j, const int* __restrict__ index_k, 
     const double* __restrict__ r_shape, const double* __restrict__ phi_shape, const double* __restrict__ z_shape, int nphi, int nz, int nparticles_blk){
 
     for(int idx=threadIdx.x; idx<nparticles_blk*n; idx+= THREADS_PER_BLOCK){
@@ -119,19 +119,21 @@ template <int n> __device__ void interpolate(double*  out, const double* __restr
     }
 }
 
-// calc_derivs computes the derivatives at points stored for which the corresponding
+// calc_derivs computes the derivatives at points for which the corresponding
 // i,j,k indices and shape functions have been precomputed
 // the results are stored in the appropriate region of derivs
 // nparticles_blk stores the number of actual particles in the block
 //
 // this function is templated across rhs options
-template<RHS id, typename... Args>  __device__ void calc_derivs(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited, 
+template<RHS id, typename... Args>  
+__device__ void calc_derivs(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited, 
                                     int* index_i, int* index_j, int* index_k, double* r_shape, double* phi_shape, double* z_shape,
                                     double* mu, double m, double q, int nphi, int nz, int nparticles_blk, Args... args){};
 
 
 // calc_derivs implementation for guiding center cartesian vacuum tracing
-template <> __device__ void calc_derivs<RHS::GC_CartesianVacuum>(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited, 
+template <> 
+__device__ void calc_derivs<RHS::GC_CartesianVacuum>(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited, 
                                     int* index_i, int* index_j, int* index_k, double* r_shape, double* phi_shape, double* z_shape,
                                     double* mu, double m, double q, int nphi, int nz, int nparticles_blk){
     __shared__ double block_interpolants[7*PARTICLES_PER_BLOCK];
@@ -188,8 +190,9 @@ template <> __device__ void calc_derivs<RHS::GC_CartesianVacuum>(double* derivs,
 }
 
 
-// calc_derivs implementation for guiding center cartesian vacuum tracing
-template <> __device__ void calc_derivs<RHS::GC_BoozerVacuum>(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited, 
+// calc_derivs implementation for guiding center boozer vacuum tracing
+template <> 
+__device__ void calc_derivs<RHS::GC_BoozerVacuum>(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited, 
                                     int* index_i, int* index_j, int* index_k, double* s_shape, double* t_shape, double* z_shape,
                                     double* mu, double m, double q, int nt, int nz, int nparticles_blk, double psi0){
 
@@ -243,15 +246,30 @@ template <> __device__ void calc_derivs<RHS::GC_BoozerVacuum>(double* derivs, in
 };
 
 
+// map to grid takes a particle location and maps it to the interpolation grid
+// this is where stellarator symmetry is exploited
+// and points outside of the magnetic field are mapped to the nearest cell
+//
+// this function is templated across rhs implementations but it's possible
+// that this should be considered to be the implementation for a coordinate
+// system independent of rhs
+//
+// interp_pt stores where the interpolant should be evaluated (in the grid)
+// xyz stores the particle's current location via the x_temp array in shared
+//  memory. 
+// symmetry_exploited is a bool indicating whether stellarator symmetry was exploited
+// there's an option for optional parameters
+
 template<RHS id, typename... Args>
 __device__ void map_to_grid(double* interp_pt, double * xyz, bool* symmetry_exploited, Args... args);                                    
 
+
+// map_to_grid implementation for Cartesian tracing
 template <>
 __device__ void map_to_grid<RHS::GC_CartesianVacuum>(double* interp_pt, double* x_temp, bool* symmetry_exploited, double* rrange_arr, double* phirange_arr, double* zrange_arr){
     double x = x_temp[0*PARTICLES_PER_BLOCK + threadIdx.x];
     double y = x_temp[1*PARTICLES_PER_BLOCK + threadIdx.x];
     double z = x_temp[2*PARTICLES_PER_BLOCK + threadIdx.x];
-    double v_par = x_temp[3*PARTICLES_PER_BLOCK + threadIdx.x];
 
 
     // convert to cylindrical coordinates for interpolation
@@ -277,6 +295,7 @@ __device__ void map_to_grid<RHS::GC_CartesianVacuum>(double* interp_pt, double* 
     interp_pt[2] = z;
 } 
 
+// map_to_grid implementation for Boozer tracing
 template <>
 __device__ void map_to_grid<RHS::GC_BoozerVacuum>(double* interp_pt, double* x_temp, bool* symmetry_exploited, double* srange_arr, double* trange_arr, double* zrange_arr){
 
@@ -285,8 +304,6 @@ __device__ void map_to_grid<RHS::GC_BoozerVacuum>(double* interp_pt, double* x_t
     double s = sqrt(x1*x1 + x2*x2);
     double theta = atan2(x2, x1);
     double z = x_temp[2*PARTICLES_PER_BLOCK + threadIdx.x]; // zeta
-
-    // printf("recovered s, t, z=%.15e, %.15e, %.15e\n", s, theta, z);
 
     // we want to exploit periodicity in the B-field, but leave sine(theta) unchanged
     double t = fmod(theta, 2*M_PI);
@@ -297,33 +314,25 @@ __device__ void map_to_grid<RHS::GC_BoozerVacuum>(double* interp_pt, double* x_t
     z = fmod(z, period);
     z += period*(z < 0);
 
-    // printf("zrange_arr contents: %.15e, %.15e, %.15e\n", zrange_arr[0], zrange_arr[1], zrange_arr[2]);
-    // printf("period = %.15e\n", period);
-
-    // printf("deriv pt (pos): %.15e, %.15e, %.15e, %.15e, %.15e\n", p.dt, s, t, z, p.x_temp[3]);
-
-
-    
     // exploit stellarator symmetry
     symmetry_exploited[threadIdx.x] = t > M_PI;
     if(symmetry_exploited[threadIdx.x]){
         z = period - z;
         t = 2*M_PI - t;
-        // std::cout << "symmetry exploited\n";
 
     }
-    // x_temp[0*PARTICLES_PER_BLOCK + threadIdx.x] = s;
     interp_pt[0] = s;
     interp_pt[1] = t;
     interp_pt[2] = z;
 }
 
 
+// build_state is part of the DP5 implementation
 template <RHS id>
 __device__ void build_state(double* x_temp, int deriv_id, bool* symmetry_exploited, int* index_i, int* index_j, int* index_k,
                             double* r_shape, double* phi_shape, double* z_shape, double* state, double* derivs, double* dt,
                             double* rrange_arr, double* phirange_arr, double* zrange_arr){
-    const double b1 = 35.0 / 384.0, b3 = 500.0 / 1113.0, b4 = 125.0 / 192.0, b5 = -2187.0 / 6784.0, b6 = 11.0 / 84.0;
+    // const double b1 = 35.0 / 384.0, b3 = 500.0 / 1113.0, b4 = 125.0 / 192.0, b5 = -2187.0 / 6784.0, b6 = 11.0 / 84.0;
     double wgts[6] = {0.0}; 
     for (int i = 0; i < 4; i++) {
         x_temp[i*PARTICLES_PER_BLOCK + threadIdx.x] = state[i*PARTICLES_PER_BLOCK + threadIdx.x];
@@ -572,9 +581,9 @@ __device__ void adjust_time(double* t, double* dt, double* state, double* derivs
 }
 
 
-template<RHS id>
+template<RHS id, typename... Args>
 __global__ void particle_trace_kernel(particle_t* particles, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr,
-                        double tmax, double m, double q, int nparticles){
+                        double tmax, double m, double q, int nparticles, Args... args){
     int idx = threadIdx.x + blockIdx.x*PARTICLES_PER_BLOCK;
     particle_t p;
 
@@ -613,7 +622,7 @@ __global__ void particle_trace_kernel(particle_t* particles, double* srange_arr,
     // calculate the particle's magnetic moment mu, dt, dtmax
     setup_particle<id>(mu, t, dt, dtmax, x_temp, symmetry_exploited, index_i, index_j, index_k,
                         quadpts_arr, r_shape, phi_shape, z_shape, state, derivs,
-                        srange_arr, trange_arr, zrange_arr, p.v_total, 1e-2, m, q, nparticles_blk);
+                        srange_arr, trange_arr, zrange_arr, p.v_total, 1e-2, m, q, nparticles_blk, args...);
     int nphi = (trange_arr[2]-1)/3;
     int nz = (zrange_arr[2]-1)/3;
     __syncthreads();
@@ -632,7 +641,7 @@ __global__ void particle_trace_kernel(particle_t* particles, double* srange_arr,
             // ensure that all threads have updated x_temp before calculating derivatives, where a data race would occur
             __syncthreads();
             calc_derivs<id>(derivs, k, quadpts_arr, x_temp, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, mu, m, q,
-                        nphi, nz, nparticles_blk);
+                        nphi, nz, nparticles_blk, args...);
 
             // ensure all particles have derivative calculations before accepting/rejecting timestep
             __syncthreads();
@@ -659,9 +668,10 @@ __global__ void particle_trace_kernel(particle_t* particles, double* srange_arr,
 }
 
 
-extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
+template<RHS id, typename... Args>
+vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
         py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
-        double tmax, double tol, int nparticles){
+        double tmax, double tol, int nparticles, Args... args){
 
     //  read data in from python
     py::buffer_info stz_init_buf = stz_init.request();
@@ -742,7 +752,7 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
     cudaEventRecord(start);
-    particle_trace_kernel<RHS::GC_CartesianVacuum><<<nblks, nthreads>>>(particles_d, srange_d, trange_d, zrange_d, quadpts_d, tmax, m, q, nparticles);
+    particle_trace_kernel<id><<<nblks, nthreads>>>(particles_d, srange_d, trange_d, zrange_d, quadpts_d, tmax, m, q, nparticles, args...);
 
     gpuErrchk(cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost) );
 
@@ -774,6 +784,18 @@ extern "C" vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<
 
     return particle_output;
 }
+
+extern "C" vector<double> cartesian_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
+        py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
+        double tmax, double tol, int nparticles){
+            return gpu_tracing<RHS::GC_CartesianVacuum>(quad_pts, srange, trange, zrange, stz_init, m, q, vtotal, vtang, tmax, tol, nparticles);
+        }
+
+extern "C" vector<double> boozer_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
+        py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
+        double tmax, double tol, double psi0, int nparticles){
+            return gpu_tracing<RHS::GC_CartesianVacuum>(quad_pts, srange, trange, zrange, stz_init, m, q, vtotal, vtang, tmax, tol, nparticles, psi0);
+        }
 
 
 template<RHS id>
