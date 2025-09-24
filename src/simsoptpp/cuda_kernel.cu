@@ -601,7 +601,7 @@ __device__ void adjust_time(double* t, double* dt, double* state, double* derivs
         double x1 = state[0*PARTICLES_PER_BLOCK + threadIdx.x];
         double x2 = state[1*PARTICLES_PER_BLOCK + threadIdx.x];
         double s = sqrt(x1*x1 + x2*x2);
-        printf("particle %d, time = %.15e, s=%.15e\n", threadIdx.x, t[threadIdx.x], s);
+        // printf("particle %d, time = %.15e, s=%.15e\n", threadIdx.x, t[threadIdx.x], s);
 
     } else {
         // Reject the step and try again with smaller dt
@@ -791,6 +791,17 @@ vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> sra
     cudaEventElapsedTime(&milliseconds, start, stop);
     std::cout << "tracing kernels time (ms): " << milliseconds<< "\n";
 
+
+    gpuErrchk( cudaFree(particles_d) );
+
+    gpuErrchk( cudaFree(srange_d) );
+
+    gpuErrchk( cudaFree(trange_d) );
+
+    gpuErrchk( cudaFree(zrange_d) );
+
+    gpuErrchk( cudaFree(quadpts_d) );
+
     vector<double> particle_output(7*nparticles);
     for(int i=0; i<nparticles; ++i){
         double y1 = particles[i].state[0];
@@ -836,7 +847,17 @@ extern "C" vector<double> boozer_gpu_tracing(py::array_t<double> quad_pts, py::a
                 stz_init_arr[3*i+1] = s*sin(theta);
             }
 
-            return gpu_tracing<RHS::GC_BoozerVacuum>(quad_pts, srange, trange, zrange, stz_init, m, q, vtotal, vtang, tmax, tol, nparticles, psi0);
+            std::vector<double> results =  gpu_tracing<RHS::GC_BoozerVacuum>(quad_pts, srange, trange, zrange, stz_init, m, q, vtotal, vtang, tmax, tol, nparticles, psi0);
+
+            for(int i=0; i<nparticles; ++i){
+                double x1 = results[7*i];
+                double x2 = results[7*i+1];
+
+                results[7*i] = sqrt(x1*x1 + x2*x2);
+                results[7*i+1] = atan2(x2, x1);
+            }
+
+            return results;
         }
 
 
