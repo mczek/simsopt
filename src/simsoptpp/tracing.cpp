@@ -459,7 +459,7 @@ solve(RHS rhs, typename RHS::State y, double tmax, double dt, double dtmax, doub
         }
         // check whether we have satisfied any of the extra stopping criteria (e.g. left a surface)
         for (int i = 0; i < stopping_criteria.size(); ++i) {
-            if(stopping_criteria[i] && (*stopping_criteria[i])(iter, t, y[0], y[1], y[2])){
+            if(stopping_criteria[i] && (*stopping_criteria[i])(iter, t, sqrt(y[0]*y[0] + y[1]*y[1]), atan2(y[1], y[0]), y[2])){
                 stop = true;
                 res_phi_hits.push_back(join<2, RHS::Size>({t, -1-double(i)}, y));
                 break;
