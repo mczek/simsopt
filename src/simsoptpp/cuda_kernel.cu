@@ -527,6 +527,7 @@ __device__ void setup_particle(double* mu, double* t, double* dt, double* dtmax,
         // dtmax[threadIdx.x] = r*0.5*M_PI/vtotal;
 
         calc_max_timestep_size<id>(dtmax, x_temp, derivs, vtotal);
+        dtmax[threadIdx.x] = fmin(dtmax[threadIdx.x], tmax);
 
         dt[threadIdx.x] = 1e-3*dtmax[threadIdx.x];
     }
@@ -598,9 +599,9 @@ __device__ void adjust_time(double* t, double* dt, double* state, double* derivs
         // check if particle has left the device
         check_has_left<id>(has_left, state, derivs);
 
-        double x1 = state[0*PARTICLES_PER_BLOCK + threadIdx.x];
-        double x2 = state[1*PARTICLES_PER_BLOCK + threadIdx.x];
-        double s = sqrt(x1*x1 + x2*x2);
+        // double x1 = state[0*PARTICLES_PER_BLOCK + threadIdx.x];
+        // double x2 = state[1*PARTICLES_PER_BLOCK + threadIdx.x];
+        // double s = sqrt(x1*x1 + x2*x2);
         // printf("particle %d, time = %.15e, s=%.15e\n", threadIdx.x, t[threadIdx.x], s);
 
     } else {
