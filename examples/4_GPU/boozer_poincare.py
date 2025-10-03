@@ -1,7 +1,3 @@
-# This file is for comparing a particle's trajectory in the cpu vs gpu code
-# It is intended for debugging purposes
-
-#!/usr/bin/env python
 import pandas as pd
 
 import os
@@ -28,16 +24,16 @@ import simsoptpp as sopp
 
 from simsopt.util import boozer_interpolant
 from simsopt.util import sample_stz
+
+np.random.seed(1865)
  
 
-# Set up a Boozer field
+### Set up a Boozer field
 filename = os.path.join('./examples/2_Intermediate/inputs/input.LandremanPaul2021_QH')
-
 logging.basicConfig()
 logger = logging.getLogger('simsopt.field.tracing')
 
 # Compute VMEC equilibrium
-t1 = time.time()
 vmec = Vmec(filename)
 
 # Construct radial interpolant of magnetic field
@@ -53,25 +49,19 @@ zetarange = (0, 2*np.pi/nfp, 15)
 field = InterpolatedBoozerField(bri, degree, srange, thetarange, zetarange, True, nfp=nfp, stellsym=True)
 
 ### Maximum tracing time
-tmax = 1e-4
+tmax = 1e-3
 
 ### Sample initial conditions
-# nparticles = 1000
-# stz = np.vstack([sample_stz(field, maxJ) for _ in range(nparticles)])
-s_vals = np.linspace(0, 1, 10)
-theta_vals = np.linspace(-np.pi, np.pi, 10)
-stz = np.vstack([[s_val, theta_val, 0] for s_val in s_vals for theta_val in theta_vals])
+s_vals = np.linspace(0, 1, 10, dtype=np.float64)
+theta_vals = np.linspace(-np.pi, np.pi, 10, dtype=np.float64)
+stz = np.vstack([[s_val, theta_val, 0] for s_val in s_vals for theta_val in theta_vals], dtype=np.float64)
 
 nparticles = stz.shape[0]
-vpar_init = np.sqrt(2*1e3*ONE_EV/MASS)* 0.5*np.ones(nparticles)#np.random.uniform(-1, 1, nparticles)
+vpar_init = np.sqrt(2*1e3*ONE_EV/MASS)* 0.5*np.ones(nparticles, dtype=np.float64)#np.random.uniform(-1, 1, nparticles)
 
 
 ### First, get poincare data from simsopt
 
-# # x is an element of gc_zeta_hits
-# # we want to make a dataframe with the particle location
-# # at each hit
-# def get_position_data(x):
 
 
 # trace this particle in simsopt, saving the trajectory
@@ -101,20 +91,24 @@ vpar_init = np.sqrt(2*1e3*ONE_EV/MASS)* 0.5*np.ones(nparticles)#np.random.unifor
 ### using bisection algorithm
 
 # create gpu interpolant data
+
+print("generating b field interpolant data")
 srange, trange, zrange, quad_info, maxJ = boozer_interpolant(field, nfp, 15)
 
 # First set an initial distance at which to save
-dt_save = 1e-7
+dt_save = 1e-8
 
 gpu_stz = stz.copy()
 gpu_vpar = vpar_init.copy()
 
 gpu_time = 0
 snapshots = []
+ids = list(range(nparticles))
 while gpu_time < tmax:
     print(gpu_time)
     gpu_time += dt_save
 
+    # print("before", gpu_stz)
     last_time = sopp.boozer_gpu_tracing(
         quad_pts=quad_info, 
         srange=srange,
@@ -124,13 +118,15 @@ while gpu_time < tmax:
         m=MASS, 
         q=CHARGE, 
         vtotal=np.sqrt(2*1e3*ONE_EV/MASS),  
-        vtang=gpu_vpar, 
+        vtang=gpu_vpar.copy(), 
         tmax=dt_save, 
         tol=1e-9, 
         psi0=field.psi0, 
-        nparticles=nparticles)
+        nparticles=len(ids))
+    # print("after", gpu_stz)
 
-    last_time = np.reshape(last_time, (nparticles, 7))
+
+    last_time = np.reshape(last_time, (len(ids), 7))
 
     # save snapshot s, theta, zeta, vpar
     snapshot_data = pd.DataFrame({'s':last_time[:, 0],
@@ -138,24 +134,108 @@ while gpu_time < tmax:
                                   'zeta':last_time[:,2],
                                   'vpar':last_time[:,3]})
     snapshot_data['time'] = gpu_time
-    snapshot_data['id'] = list(range(nparticles))
+    snapshot_data['id'] = ids
     snapshots += [snapshot_data]
+
+    # remove lost particles
+    ids = [ids[i] for i in range(len(ids)) if last_time[i,0] < 1]
+    last_time = last_time[last_time[:,0] < 1.0] # s < 1
+
+    # update particle locations
+    gpu_stz = last_time[:, 0:3]
+    gpu_vpar = last_time[:, 3]
+    gpu_stz = np.ascontiguousarray(gpu_stz, dtype=np.float64)
+    gpu_vpar = np.ascontiguousarray(gpu_vpar, dtype=np.float64)
+
 
 full_snapshots = pd.concat(snapshots, ignore_index=True)
 full_snapshots = full_snapshots.sort_values(by = ['id', 'time'])
+full_snapshots['zeta_mod_2pi'] = np.mod(full_snapshots['zeta'], 2*np.pi)
+full_snapshots.to_csv("examples/4_GPU/boozer_gpu_snapshots.csv")
+
 # check for poincare punctures
-ids = full_snapshots['id']
-zetas = full_snapshots['zeta']
-zetas_shift = full_snapshots - np.pi
-nrows = full_snapshots.shape[0]
-zeta_crossing = [np.cos(zetas[i]) > 0 and np.sign(zetas_shift[i]) != np.sign(zetas_shift[i+1]) for i in range(nrows-1)]
+def find_punctures(df, tol=1e-3):
+    print("finding punctures...")
+    df = df.sort_values(by = ['id', 'time'])
 
-need_refine = [ids[i] == ids[i+1] and np.sign(zetas[i]) != np.sign(zetas[i+1]) for i in range(nrows-1)]
+    print("sorted df")
+    print(df)
+    ids = df['id']
+    zetas = np.mod(df['zeta'], 2*np.pi)
+    zetas_shift = zetas - np.pi
+    nrows = df.shape[0]
+    # print(zetas)
+    # print(np.min(zetas))
+    # print(np.max(zetas))
+    # print(zetas_shift)
+
+    # satisfy a tolerance
+    diff = np.minimum(np.abs(zetas), np.abs(zetas - 2*np.pi))
+
+    zeta_crossing = [(np.abs(zetas[i]) < np.pi/2) and (np.sign(zetas_shift[i]) != np.sign(zetas_shift[i+1])) for i in range(nrows-1)]
+    no_match = [(diff[i] > tol) and (diff[i+1] > tol) for i in range(nrows-1)]
+    need_refine = [(ids[i] == ids[i+1]) and zeta_crossing[i] and no_match[i] for i in range(nrows-1)]
+
+    return need_refine + [False] # to use as a mask
 
 
-print(full_snapshots)
-print(need_refine) 
-print(np.sum(need_refine))
+need_refinement = find_punctures(full_snapshots)
+while(np.sum(need_refinement) > 0):
+    dt_save /= 2
+
+    print("Refining, new dt_save = ", dt_save)
+    print("Number needing refinement: ")
+    print(np.sum(need_refinement))
+    # exit()
+    # print(need_refinement)
+    # exit()
+    next_starts = full_snapshots[need_refinement]
+    print(next_starts)
+    # exit()
+    refine_stz = next_starts[['s', 'theta', 'zeta']].to_numpy()
+    refine_vpar = next_starts['vpar'].to_numpy()
+    refine_times = next_starts['time']
+    # exit()
+    nparticles = refine_stz.shape[0]
+    last_time = sopp.boozer_gpu_tracing(
+        quad_pts=quad_info, 
+        srange=srange,
+        trange=trange,
+        zrange=zrange, 
+        stz_init=refine_stz.copy(),
+        m=MASS, 
+        q=CHARGE, 
+        vtotal=np.sqrt(2*1e3*ONE_EV/MASS),  
+        vtang=refine_vpar.copy(), 
+        tmax=dt_save, 
+        tol=1e-9, 
+        psi0=field.psi0, 
+        nparticles=nparticles)
+    last_time = np.reshape(last_time, (nparticles, 7))
+    # exit()
+    # print(refine_times)
+    # print(last_time)
+    snapshot_data = pd.DataFrame({'s':last_time[:, 0],
+                                    'theta':last_time[:,1],
+                                    'zeta':last_time[:,2],
+                                    'vpar':last_time[:,3],
+                                    'time':refine_times + dt_save})
+    print("new locations", snapshot_data)
+    snapshot_data['time'] = gpu_time
+    snapshot_data['id'] = next_starts['id']
+    full_snapshots = pd.concat([full_snapshots, snapshot_data], ignore_index=True)
+    need_refinement = find_punctures(full_snapshots)
+
+zetas = np.mod(full_snapshots['zeta'], 2*np.pi)
+diff = np.minimum(np.abs(zetas), np.abs(zetas - 2*np.pi))
+poincare_hits = full_snapshots[diff < 1e-3]
+poincare_hits.to_csv("examples/4_GPU/boozer_gpu_poincare.csv")
+full_snapshots.to_csv("examples/4_GPU/boozer_gpu_full.csv")
+exit()
+# print(full_snapshots)
+# print(need_refine) 
+# print(np.sum(zeta_crossing))
+# print(np.sum(need_refine))
 exit()
 
 gpu_stz = stz.copy()
@@ -172,7 +252,6 @@ while tracing_time < tmax:
     cpu_final_stz = np.vstack([gc_tys[i][-1][1:4] for i in range(nparticles)])
     cpu_final_vpar = np.vstack([gc_tys[i][-1][4] for i in range(nparticles)])
     cpu_final_t = np.vstack([gc_tys[i][:, 0] for i in range(nparticles)])
-
 
 
 
